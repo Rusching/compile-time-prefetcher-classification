@@ -7,7 +7,7 @@ die "\$PYTHIA_HOME env variable is not defined.\nHave you sourced setvars.sh?\n"
 
 my $megatool_exe = "$ENV{'PYTHIA_HOME'}/scripts/megatools-1.11.1.20230212-linux-x86_64/megatools";
 my $input_file;
-my $dir=".";
+my $dir = ".";
 GetOptions('csv=s' => \$input_file,
             'dir=s' => \$dir,
 ) or die "Usage $0 --csv <csv file containing name and URL of traces> --dir <directory to store>\n";
@@ -21,20 +21,26 @@ close($fh);
 foreach my $line (@lines)
 {
     my @tokens = split(',', trim($line));
-    $trace_file_name = trim($tokens[0]);
-    $trace_file_url = trim($tokens[1]);
+    my $trace_file_name = trim($tokens[0]);
+    my $trace_file_url = trim($tokens[1]);
+
+    # Check if the trace file already exists in the target directory
+    if (-e "$dir/$trace_file_name") {
+        print "Skipping $trace_file_name: File already exists.\n";
+        next;
+    }
+
     print "Downloading $trace_file_name...\n";
     my $cmd;
-    if($trace_file_url =~ /mega\.nz/)
+    if ($trace_file_url =~ /mega\.nz/)
     {
-	    $cmd = "$megatool_exe dl --path=$dir $trace_file_url";
+        $cmd = "$megatool_exe dl --path=$dir $trace_file_url";
     }
     else
     {
-	    $cmd = "wget --no-check-certificate $trace_file_url -O $dir/$trace_file_name";
+        $cmd = "wget --no-check-certificate $trace_file_url -O $dir/$trace_file_name";
     }
     system($cmd);
-    #print("$cmd\n");
 }
 
 my $total_traces = `wc -l $input_file | awk '{print \$1}'`;
@@ -48,4 +54,5 @@ print "Trace downloading completed\n";
 print "Downloaded $downloaded/$total_traces traces\n";
 print "================================\n";
 
-sub  trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s };
+sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s }
+
