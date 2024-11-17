@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Default behavior: Run 1C_BASE experiments
-RUN_1C_BASE=true
+DEFAULT=true
+RUN_1C_BASE=false
 RUN_1C_DRAM=false
 RUN_4C=false
 
@@ -10,20 +11,24 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --1C_BASE)
             RUN_1C_BASE=true
+            DEFAULT=false
             shift
             ;;
         --1C_DRAM)
             RUN_1C_DRAM=true
+            DEFAULT=false
             shift
             ;;
         --4C)
             RUN_4C=true
+            DEFAULT=false
             shift
             ;;
         --all)
             RUN_1C_BASE=true
             RUN_1C_DRAM=true
             RUN_4C=true
+            DEFAULT=false
             shift
             ;;
         *)
@@ -33,6 +38,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Apply default behavior if no specific options were selected
+if $DEFAULT; then
+    RUN_1C_BASE=true
+fi
 
 # Check if tlist argument is provided
 if [ -z "$1" ]; then
@@ -109,14 +119,10 @@ if [ "$RUN_4C" = true ]; then
     cd ..
 fi
 
-# Summary
-echo "Experiment workflow completed."
-if [ "$RUN_1C_BASE" = true ]; then
-    echo "  - $EXPERIMENTS_DIR/rollup_1C_base_config.csv"
-fi
-if [ "$RUN_1C_DRAM" = true ]; then
-    echo "  - $EXPERIMENTS_DIR/rollup_1C_varying_DRAM_bw.csv"
-fi
-if [ "$RUN_4C" = true ]; then
-    echo "  - $EXPERIMENTS_DIR/rollup_4C.csv"
-fi
+# Move rollup_*.csv files into PYTHIA_HOME
+echo "Moving rollup_*.csv files to $PYTHIA_HOME..."
+find "$EXPERIMENTS_DIR" -type f -name "rollup_*.csv" -exec mv {} "$PYTHIA_HOME" \;
+
+# Final Summary
+echo "Experiment workflow completed. Summary of rollup files moved:"
+find "$PYTHIA_HOME" -type f -name "rollup_*.csv"
