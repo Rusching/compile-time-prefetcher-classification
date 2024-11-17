@@ -7,6 +7,8 @@ RUN_1C_DRAM=false
 RUN_4C=false
 
 # Parse command-line arguments
+POSITIONAL_ARGS=()
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --1C_BASE)
@@ -31,25 +33,33 @@ while [[ $# -gt 0 ]]; do
             DEFAULT=false
             shift
             ;;
-        *)
+        -*|--*)
             echo "Unknown option: $1"
             echo "Usage: $0 [--1C_BASE | --1C_DRAM | --4C | --all] <tlist_file>"
             exit 1
             ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
     esac
 done
+
+# Restore positional parameters
+set -- "${POSITIONAL_ARGS[@]}"
+
+# Validate the tlist argument
+if [ ${#POSITIONAL_ARGS[@]} -eq 0 ]; then
+    echo "Usage: $0 [--1C_BASE | --1C_DRAM | --4C | --all] <tlist_file>"
+    exit 1
+fi
+
+TLIST="${POSITIONAL_ARGS[0]}"
 
 # Apply default behavior if no specific options were selected
 if $DEFAULT; then
     RUN_1C_BASE=true
 fi
-
-# Check if tlist argument is provided
-if [ -z "$1" ]; then
-    echo "Usage: $0 [--1C_BASE | --1C_DRAM | --4C | --all] <tlist_file>"
-    exit 1
-fi
-TLIST="$1"
 
 # Source environment variables
 if [ -f "./setvars.sh" ]; then
