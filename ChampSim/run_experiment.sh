@@ -87,6 +87,8 @@ MFILE_4C="rollup_4C.mfile"
 mkdir -p "$EXPERIMENTS_DIR/experiments_1C"
 mkdir -p "$EXPERIMENTS_DIR/experiments_4C"
 
+cp "$TLIST" "$EXPERIMENTS_DIR"
+
 # Run 1C_BASE experiments
 if [ "$RUN_1C_BASE" = true ]; then
     echo "Running 1C_BASE experiments..."

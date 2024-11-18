@@ -30,20 +30,30 @@ To streamline the setup process, two new scripts have been added to the ChampSim
 
 ## Running Experiments  
 
-To execute experiments, use the command:  
+To test experiments execution, use the following command:  
 
-```bash  
-./run_experiment.sh [--1C_BASE | --1C_DRAM | --4C | --all] <tlist_file>  
-```  
+```bash
+./run_experiment.sh demo_short.tlist
+```
 
-### Options:  
+### General Experiment Command  
 
-- **Default:** If no flags are provided, the script runs the 1C_BASE case.  
-- **Custom Traces:** Use `<tlist_file>` to specify the trace list.  
-  - For quick tests, supply `demo_short.tlist` (if `--test` was used during setup).  
-  - For full trace coverage, use `demo_long.tlist` or a custom trace list.  
+```bash
+./run_experiment.sh [--1C_BASE | --1C_DRAM | --4C | --all] <tlist_file>
+```
 
-**Tip**: Even when running minimal test cases (e.g., `demo_short.tlist`), the simulator may take at least 30 minutes to complete.  
+### Options  
+
+- **Default Behavior:**  
+  If no flags are provided, the script defaults to the `--1C_BASE` case.  
+
+- **Custom Trace Lists:**  
+  - Use `<tlist_file>` to specify the trace list to run.  
+  - For quick tests, use `demo_short.tlist` (if the `--test` flag was included during setup).  
+  - For full trace coverage, use `demo_long.tlist` or provide your own custom trace list.  
+
+**Tip:**  
+Anecdotally, even minimal test cases (e.g., `demo_short.tlist`) take at least 30 minutes or more to complete due to simulator runtime.
 
 ---
 
