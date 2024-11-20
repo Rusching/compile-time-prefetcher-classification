@@ -1,3 +1,0 @@
-NAME=403.gcc-16B
-TRACE=$(PYTHIA_HOME)/traces/403.gcc-16B.champsimtrace.xz
-KNOBS=
