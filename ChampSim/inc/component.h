@@ -10,6 +10,8 @@
 #include <sstream>
 #include <random>
 
+namespace PMPComponent {
+
 class Table {
   public:
     Table(int width, int height) : width(width), height(height), cells(height, vector<string>(width)) {}
@@ -910,4 +912,7 @@ public:
 protected:
     int entry_size;
 };
+
+}
+
 #endif

@@ -1,7 +1,12 @@
 #include "cache.h"
 #include "common.h"
+#include "bakshalipour_framework.h"
+#include "util.h"
+
+
 #include "component.h"
 #include "ooo_cpu.h"
+
 #include <bits/stdc++.h>
 #include <random>
 
@@ -31,7 +36,7 @@ public:
     uint64_t pc;
 };
 
-#define FT_CACHE_TYPE SRRIPSetAssociativeCache
+#define FT_CACHE_TYPE PMPComponent::SRRIPSetAssociativeCache
 
 class FilterTable : public FT_CACHE_TYPE<FilterTableData>
 {
@@ -108,7 +113,7 @@ public:
     vector<bool> pattern;
 };
 
-#define AT_CACHE_TYPE LRUSetAssociativeCache
+#define AT_CACHE_TYPE PMPComponent::LRUSetAssociativeCache
 class AccumulationTable : public AT_CACHE_TYPE<AccumulationTableData>
 {
     typedef AT_CACHE_TYPE<AccumulationTableData> Super;
@@ -192,7 +197,7 @@ public:
     vector<int> pattern;
 };
 
-class OffsetPatternTable : public LRUSetAssociativeCache<OffsetPatternTableData>
+class OffsetPatternTable : public PMPComponent::LRUSetAssociativeCache<OffsetPatternTableData>
 {
     typedef LRUSetAssociativeCache<OffsetPatternTableData> Super;
 
@@ -311,7 +316,7 @@ public:
     vector<int> pattern;
 };
 
-#define PS_CACHE_TYPE LRUSetAssociativeCache
+#define PS_CACHE_TYPE PMPComponent::LRUSetAssociativeCache
 class PrefetchBuffer : public PS_CACHE_TYPE<PrefetchBufferData>
 {
     typedef PS_CACHE_TYPE<PrefetchBufferData> Super;
@@ -415,14 +420,15 @@ private:
     int pattern_len;
 };
 
-class PMP 
+class PMP : public Prefetcher
 {
 public:
      PMP(int pattern_len, int offset_width, int opt_size, int opt_max_conf, int opt_ways, int pc_width, 
           int ppt_size, int ppt_max_conf, int ppt_ways,int filter_table_size, int ft_way,
           int accumulation_table_size, int at_way, int pf_buffer_size, int pf_buffer_way,
           int debug_level = 0, int cpu = 0)
-        : pattern_len(pattern_len),
+        : Prefetcher("PMP"),
+          pattern_len(pattern_len),  
           opt(opt_size, pattern_len, offset_width, opt_ways, opt_max_conf, debug_level, cpu),
           ppt(ppt_size, pattern_len/PATTERN_DEGRADE_LEVEL, pc_width, ppt_ways, ppt_max_conf, debug_level, cpu),
           filter_table(filter_table_size, debug_level, ft_way),
@@ -438,6 +444,9 @@ public:
                  << ", debug_level=" << debug_level << ")" << endl;
     }
 
+    void invoke_prefetcher(uint64_t pc, uint64_t address, uint8_t cache_hit, uint8_t type, std::vector<uint64_t> &pref_addr) override {}
+	void dump_stats() override {}
+	void print_config() override {}
 
     void access(uint64_t block_number, uint64_t pc)
     {
@@ -676,7 +685,11 @@ private:
 
 const int DEBUG_LEVEL = 0;
 
-static vector< PMP> prefetchers;
+// static vector< PMP> prefetchers;
+namespace knob
+{
+	extern vector<string> l1d_prefetcher_types;
+}
 
 void CACHE::l1d_prefetcher_initialize()
 {
@@ -695,18 +708,21 @@ void CACHE::l1d_prefetcher_initialize()
     const int PF_BUFFER_SIZE = 16;    
     const int PF_BUFFER_WAY  = 16;
 
-    prefetchers = vector< PMP>(
-        NUM_CPUS,  PMP(PATTERN_LEN, 
+    for(uint32_t index = 0; index < knob::l1d_prefetcher_types.size(); ++index)
+	{
+        PMP *pref_pmp_l1 = new PMP(PATTERN_LEN, 
                         OFFSET_BITS, OPT_SIZE, OFFSET_MAX_CONF, OPT_WAYS, 
                         PC_BITS, PPT_SIZE, PC_MAX_CONF, PPT_WAYS,
                         FT_SIZE, FT_WAY, 
                         AT_SIZE, AT_WAY, 
                         PF_BUFFER_SIZE, PF_BUFFER_WAY, 
-                        DEBUG_LEVEL, cpu));
+                        DEBUG_LEVEL, cpu);
+        l1d_prefetchers.push_back(pref_pmp_l1);
+	}
 }
 
 
-void CACHE::l1d_prefetcher_operate(uint64_t v_addr, uint64_t p_addr, uint64_t ip, uint8_t cache_hit, uint8_t type) {}
+// void CACHE::l1d_prefetcher_operate(uint64_t v_addr, uint64_t p_addr, uint64_t ip, uint8_t cache_hit, uint8_t type) {}
 
 void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type )
 {
@@ -723,13 +739,16 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
 
     uint64_t block_number = addr >> BOTTOM_BITS;
 
-    prefetchers[cpu].access(block_number, ip);
+    dynamic_cast<PMP*>(prefetchers[cpu])->access(block_number, ip);
+    // prefetchers[cpu].access(block_number, ip);
 
-    prefetchers[cpu].prefetch(this, block_number);
+    dynamic_cast<PMP*>(prefetchers[cpu])->prefetch(this, block_number);
+    // prefetchers[cpu].prefetch(this, block_number);
 
     if (DEBUG_LEVEL >= 3)
     {
-        prefetchers[cpu].log();
+        dynamic_cast<PMP*>(prefetchers[cpu])->log();
+        // prefetchers[cpu].log();
         cerr << "=======================================" << dec << endl;
     }
 }
@@ -744,11 +763,34 @@ void CACHE::l1d_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way,
     for (int i = 0; i < NUM_CPUS; i += 1)
     {
         if (!block[set][way].prefetch)
-            prefetchers[i].eviction(evicted_block_number);
+            dynamic_cast<PMP*>(prefetchers[cpu])->eviction(evicted_block_number);
+            // prefetchers[i].eviction(evicted_block_number);
     }
 }
 
 void CACHE::l1d_prefetcher_final_stats()
 {
-    prefetchers[cpu].log();
+    dynamic_cast<PMP*>(prefetchers[cpu])->log();
+    // prefetchers[cpu].log();
 }
+
+void CACHE::l1d_prefetcher_print_config() {
+    std::cout << "L1D Prefetcher: PMP" << std::endl;
+}
+
+void CACHE::l1d_prefetcher_broadcast_bw(unsigned char bw_level) {
+    // to do
+}
+
+uint32_t CACHE::l1d_prefetcher_prefetch_hit(uint64_t addr, uint64_t ip, uint32_t metadata) {
+    return metadata;
+}
+
+void CACHE::l1d_prefetcher_broadcast_ipc(unsigned char ipc) {
+    // to do
+}
+
+void CACHE::l1d_prefetcher_broadcast_acc(unsigned int acc_level) {
+    // to do
+}
+
