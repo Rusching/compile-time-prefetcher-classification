@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-total_jobs=5
+total_jobs=1
 job_counter=0
 start_time=$(date +%s)
 update_progress() {
@@ -17,19 +17,7 @@ update_progress() {
 }
 echo -e '\nStarting jobs...'
 update_progress
-/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-multi-multi-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/nopref.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_nopref.out 2>&1
-((job_counter++))
-update_progress
-/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-multi-multi-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --l2c_prefetcher_types=spp_dev2 --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/spp_dev2.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_spp.out 2>&1
-((job_counter++))
-update_progress
-/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-multi-multi-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --l2c_prefetcher_types=bingo --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/bingo.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_bingo.out 2>&1
-((job_counter++))
-update_progress
-/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-multi-multi-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --l2c_prefetcher_types=mlop --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/mlop.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_mlop.out 2>&1
-((job_counter++))
-update_progress
-/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-multi-multi-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --l2c_prefetcher_types=scooby --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/pythia.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_pythia.out 2>&1
+/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-pmp-no-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --l2c_prefetcher_types=pmp --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/pmp.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_pmp.out 2>&1
 ((job_counter++))
 update_progress
 

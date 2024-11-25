@@ -740,15 +740,15 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
 
     uint64_t block_number = addr >> BOTTOM_BITS;
 
-    dynamic_cast<PMP*>(l1d_prefetchers[cpu])->access(block_number, ip);
+    dynamic_cast<PMP*>(prefetchers[cpu])->access(block_number, ip);
     // prefetchers[cpu].access(block_number, ip);
 
-    dynamic_cast<PMP*>(l1d_prefetchers[cpu])->prefetch(this, block_number);
+    dynamic_cast<PMP*>(prefetchers[cpu])->prefetch(this, block_number);
     // prefetchers[cpu].prefetch(this, block_number);
 
     if (DEBUG_LEVEL >= 3)
     {
-        dynamic_cast<PMP*>(l1d_prefetchers[cpu])->log();
+        dynamic_cast<PMP*>(prefetchers[cpu])->log();
         // prefetchers[cpu].log();
         cerr << "=======================================" << dec << endl;
     }
@@ -764,14 +764,14 @@ void CACHE::l1d_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way,
     for (int i = 0; i < NUM_CPUS; i += 1)
     {
         if (!block[set][way].prefetch)
-            dynamic_cast<PMP*>(l1d_prefetchers[cpu])->eviction(evicted_block_number);
+            dynamic_cast<PMP*>(prefetchers[cpu])->eviction(evicted_block_number);
             // prefetchers[i].eviction(evicted_block_number);
     }
 }
 
 void CACHE::l1d_prefetcher_final_stats()
 {
-    dynamic_cast<PMP*>(l1d_prefetchers[cpu])->log();
+    dynamic_cast<PMP*>(prefetchers[cpu])->log();
     // prefetchers[cpu].log();
 }
 

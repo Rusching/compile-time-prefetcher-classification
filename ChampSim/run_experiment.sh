@@ -71,12 +71,12 @@ else
 fi
 
 # Define variables
-EXE="$PYTHIA_HOME/bin/perceptron-multi-multi-no-ship-1core"
+EXE="$PYTHIA_HOME/bin/perceptron-pmp-no-no-ship-1core"
 ROLLUP_SCRIPT="$PYTHIA_HOME/scripts/rollup.pl"
 EXPERIMENTS_DIR="$PYTHIA_HOME/experiments"
 
 # Experiment-specific variables
-EXP_1C_BASE="rollup_1C_base_config.exp"
+EXP_1C_BASE="single_1C_base_config.exp"
 MFILE_1C_BASE="rollup_1C_base_config.mfile"
 EXP_1C_DRAM="rollup_1C_varying_DRAM_bw.exp"
 MFILE_1C_DRAM="rollup_1C_varying_DRAM_bw.mfile"
