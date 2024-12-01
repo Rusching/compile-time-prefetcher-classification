@@ -37,7 +37,7 @@ fi
 
 # Define script variables
 LIBBF_DIR="$PYTHIA_HOME/libbf"
-BUILD_DIR="$LIBBF_DIR/build"
+CARLSIM_DIR=$PYTHIA_HOME/CARLsim
 TRACES_DIR="$PYTHIA_HOME/traces"
 MEGATOOLS_URL="https://megatools.megous.com/builds/builds/megatools-1.11.1.20230212-linux-x86_64.tar.gz"
 
@@ -51,19 +51,49 @@ else
 fi
 
 # Clone and build the bloomfilter library
-if [ ! -d "$LIBBF_DIR" ]; then
-    echo "Cloning bloomfilter library..."
-    cd $PYTHIA_HOME
-    git clone https://github.com/mavam/libbf.git libbf
+bloomfilter_dir_existed=false
+if [[ -d "$LIBBF_DIR" ]]; then
+    bloomfilter_dir_existed=true
 else
-    echo "Bloomfilter library already exists."
+    echo "Cloning bloomfilter library..."
+    cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
+    git clone https://github.com/mavam/libbf.git libbf || { echo "Failed to clone bloomfilter library"; exit 1; }
 fi
 
-echo "Building bloomfilter library..."
-mkdir -p $BUILD_DIR
-cd $BUILD_DIR
-cmake ../
-make clean && make || { echo "Failed to build bloomfilter library"; exit 1; }
+if [[ "$TEST_MODE" == "true" || "$bloomfilter_dir_existed" == "false" ]]; then
+    echo "Building bloomfilter library..."
+    cd "$LIBBF_DIR" || { echo "Failed to access CARLsim directory"; exit 1; }
+    mkdir -p build || { echo "Failed to create build directory"; exit 1; }
+    cd build || { echo "Failed to access build directory"; exit 1; }
+    cmake || { echo "CMake configuration failed"; exit 1; }
+    make clean && make || { echo "Failed to build bloomfilter library"; exit 1; }
+fi
+
+# Clone and build the CARLsim library
+carlsim_dir_existed=false
+if [[ -d "$CARLSIM_DIR" ]]; then
+    carlsim_dir_existed=true
+else
+    echo "Cloning CARLsim library..."
+    cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
+    git clone --recursive https://github.com/UCI-CARL/CARLsim4.git CARLsim || { echo "Failed to clone CARLsim library"; exit 1; }
+fi
+
+if [[ "$TEST_MODE" == "true" || "$carlsim_dir_existed" == "false" ]]; then
+    echo "Building CARLsim library..."
+    export CARLSIM4_INSTALL_DIR="$(pwd)/$CARLSIM_DIR"
+    cd "$CARLSIM_DIR" || { echo "Failed to access CARLsim directory"; exit 1; }
+    mkdir -p build || { echo "Failed to create build directory"; exit 1; }
+    cd build || { echo "Failed to access build directory"; exit 1; }
+    cmake \
+        -DCMAKE_INSTALL_PREFIX="$CARLSIM_DIR" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCARLSIM_NO_CUDA=ON \
+        .. || { echo "CMake configuration failed"; exit 1; }
+    make clean && make -j$(nproc) || { echo "Failed to build CARLsim library"; exit 1; }
+    echo "Installing CARLsim library..."
+    make install || { echo "Failed to install CARLsim library"; exit 1; }
+fi
 
 # Build Pythia
 echo "Building Pythia..."

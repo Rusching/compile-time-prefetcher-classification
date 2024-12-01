@@ -9,10 +9,11 @@ inc = inc
 debug = 1
 
 CFlags = -Wall -O3 -std=c++11 -D_DEFAULT_SOURCE -I./libbf/ -w # -Wno-unused-variable -Wno-deprecated-declarations
+CFlags += -I./CARLsim/include # Include CARLsim headers
 LDFlags = ./libbf/build/lib/libbf.a
+LDFlags += -L./CARLsim/build -lcarlsim # Link CARLsim libraries
 libs =
 libDir =
-
 
 #************************ DO NOT EDIT BELOW THIS LINE! ************************
 
@@ -36,7 +37,6 @@ else
 endif
 
 .phony: all clean distclean
-
 
 all: $(binDir)/$(app)
 
@@ -66,7 +66,6 @@ define make-repo
 	mkdir -p $(objDir)/$$dir; \
    done
 endef
-
 
 # usage: $(call make-depend,source-file,object-file,depend-file)
 define make-depend
