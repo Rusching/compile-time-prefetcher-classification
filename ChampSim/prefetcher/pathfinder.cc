@@ -1,175 +1,128 @@
-#ifndef PREFETCHER_H
-#define PREFETCHER_H
-
-#include <string>
-#include <vector>
-#include <iostream>
+#include <algorithm>
 #include <cmath>
-#include <map>
-#include <utility>
-#include "carlsim.h" // Include CARLsim library
+#include <iostream>
+#include "pathfinder.h"
+#include "champsim.h"
 
-class Prefetcher
+#include "receptive_field.hpp"
+
+namespace knob
 {
-protected:
-    std::string type;
+    extern uint32_t pf_pattern_len;
+    extern int32_t pf_confidence_threshold;
+    extern int32_t pf_min_confidence;
+    extern uint32_t pf_delta_range_len;
+    extern uint32_t pf_neuron_numbers;
+    extern uint32_t pf_timestamps;
+    extern uint32_t pf_input_intensity;
+}
 
-public:
-    Prefetcher(std::string _type) { type = _type; }
-    virtual ~Prefetcher() {}
-    std::string get_type() { return type; }
-    virtual void invoke_prefetcher(uint64_t pc, uint64_t address, uint8_t cache_hit, uint8_t type, std::vector<uint64_t> &pref_addr) = 0;
-    virtual void dump_stats() = 0;
-    virtual void print_config() = 0;
-};
-
-class SNNPrefetcher : public Prefetcher
+// Constructor
+PathfinderPrefetcher::PathfinderPrefetcher(string type)
+    : Prefetcher(type),
+      net(1, knob::pf_delta_range_len * knob::pf_pattern_len, knob::pf_neuron_numbers)
 {
-private:
-    // SNN network
-    CARLsim *sim;
-    int inputLayer;
-    int excitatoryLayer;
-    int patternLength;
-    int deltaRangeLength;
-    int neuronNumbers;
-    int timestamps;
-    float inputIntensity;
-    std::map<int, std::vector<std::pair<int, float>>> predictionTable;
+    offsets = (u_char *)calloc(knob::pf_pattern_len, sizeof(u_char));
+    last_addr = 0;
+    page_bits = log2(PAGE_SIZE);
+    cache_block_bits = log2(BLOCK_SIZE);
 
-    std::vector<int> buildEnlargedInputArray(const std::vector<int> &deltaPattern)
+    block_mask = (1 << (page_bits - cache_block_bits)) - 1;
+    page_mask = (1 << page_bits) - 1;
+
+    mat = cv::Mat(knob::pf_pattern_len, knob::pf_delta_range_len, CV_8UC1, cv::Scalar(0));
+    // mat.at<uchar>(2, 3) = 255;
+}
+
+// Destructor
+PathfinderPrefetcher::~PathfinderPrefetcher()
+{
+    free(offsets);
+}
+
+void PathfinderPrefetcher::init_knobs()
+{
+}
+
+void PathfinderPrefetcher::init_stats()
+{
+}
+
+void PathfinderPrefetcher::print_config()
+{
+    cout << "TODO: implement Pathfinder config";
+}
+
+void PathfinderPrefetcher::update_pixel_matrix(uint64_t address, bool page_change, int offset_idx)
+{
+    int offset_down = std::max(offset_idx - 1, 0);
+    int offset_up = std::min(offset_idx + 1, static_cast<int>(knob::pf_delta_range_len - 1));
+
+    /* Set up pixel matrix special case for a new page. */
+    if (page_change)
     {
-        std::vector<int> validIndexList1D;
+        /* Set every row to 0. */
+        mat.setTo(0);
 
-        for (int i = 0; i < patternLength; ++i)
-        {
-            int validIndex1D = static_cast<int>(deltaPattern[i] + (deltaRangeLength - 1) / 2);
-            validIndexList1D.push_back(validIndex1D);
-        }
-
-        return validIndexList1D;
+        /* Set the first row, column determined by address, to 1. */
+        mat.at<u_char>(0, offset_down) = 1;
+        mat.at<u_char>(0, offset_idx) = 1;
+        mat.at<u_char>(0, offset_up) = 1;
+        return;
     }
 
-    std::vector<int> feedInput(const std::vector<int> &deltaPattern)
+    /* Move rows up by one. */
+    for (int i = 0; i < knob::pf_pattern_len - 1; i++)
     {
-        std::vector<int> nonZeroIndices = buildEnlargedInputArray(deltaPattern);
+        mat.row(i) = mat.row(i + 1);
+    }
+    mat.row(knob::pf_pattern_len - 1) = cv::Scalar(0);
+    mat.at<u_char>(knob::pf_pattern_len - 1, offset_down) = 1;
+    mat.at<u_char>(knob::pf_pattern_len - 1, offset_idx) = 1;
+    mat.at<u_char>(knob::pf_pattern_len - 1, offset_up) = 1;
+}
 
-        SpikeGeneratorFromFile sg(inputLayer);
-        for (int index : nonZeroIndices)
+vector<int> PathfinderPrefetcher::custom_train(const int epochs)
+{
+    vector<int> spikes_per_neuron;
+    for (int k = 0; k < epochs; k++)
+    {
+        vector<vector<float>> potential(mat.rows, vector<float>(mat.cols, 0));
+
+        /* Convert Mat to vector. This whole library should really be rewritten
+         * but time. */
+        for (int i = 0; i < mat.rows; i++)
         {
-            sg.addSpike(index, 0, timestamps - 1); // Add spikes for input neurons
-        }
-
-        sim->runNetwork(0, timestamps);
-
-        std::vector<int> firingNeurons;
-        SpikeMonitor *spikeMon = sim->getSpikeMonitor(excitatoryLayer);
-        spikeMon->stopRecording();
-        for (int n = 0; n < neuronNumbers; ++n)
-        {
-            if (!spikeMon->getSpikeVector2D()[n].empty())
+            for (int j = 0; j < mat.cols; j++)
             {
-                firingNeurons.push_back(n);
+                potential[i][j] = static_cast<float>(mat.at<u_char>(i, j));
             }
         }
-        sim->resetState();
 
-        return firingNeurons;
+        spikes_per_neuron = net.train_on_potential(potential);
     }
+    return spikes_per_neuron;
+}
 
-    std::pair<std::vector<int>, std::vector<int>> makePrediction(const std::vector<int> &deltaPattern)
-    {
-        std::vector<int> outputNeurons = feedInput(deltaPattern);
-        std::vector<int> predictionDeltas;
+void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address, uint8_t cache_hit, uint8_t type, vector<uint64_t> &pref_addr)
+{
+    /* Update input pixel matrix. */
+    bool page_change = !(last_addr & page_mask == address & page_mask);
+    int offset = (static_cast<int64_t>(address) - static_cast<int64_t>(last_addr)) & block_mask;
+    int offset_idx = offset + knob::pf_delta_range_len / 2;
 
-        if (!outputNeurons.empty() && predictionTable.find(outputNeurons[0]) != predictionTable.end())
-        {
-            for (auto deltaTuple : predictionTable[outputNeurons[0]])
-            {
-                predictionDeltas.push_back(deltaTuple.first);
-            }
-        }
-        else
-        {
-            predictionDeltas.clear();
-        }
+    update_pixel_matrix(address, page_change, offset_idx);
 
-        return {outputNeurons, predictionDeltas};
-    }
+    /* Feed into neural network. */
+    vector<int> spikes = custom_train(1);
 
-    void updatePredictionTable(int neuron, int delta)
-    {
-        if (predictionTable.find(neuron) == predictionTable.end())
-        {
-            predictionTable[neuron] = {{delta, 0.0f}};
-        }
-        else
-        {
-            bool found = false;
-            for (auto &pair : predictionTable[neuron])
-            {
-                if (pair.first == delta)
-                {
-                    pair.second += 1.0f; // Increment confidence
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-            {
-                predictionTable[neuron].emplace_back(delta, 0.0f);
-            }
-        }
-    }
+    /* Update prediction table. */
 
-public:
-    SNNPrefetcher(int pl, int drl, int nn, int ts, float ii)
-        : Prefetcher("SNNPrefetcher"), patternLength(pl), deltaRangeLength(drl),
-          neuronNumbers(nn), timestamps(ts), inputIntensity(ii)
-    {
-        sim = new CARLsim("SNNPrefetcher", GPU_MODE, USER);
+    /* Complete prefetch. */
+    pref_addr.push_back(address);
+    last_addr = address;
+}
 
-        inputLayer = sim->createSpikeGeneratorGroup("Input", deltaRangeLength * patternLength, EXCITATORY_NEURON);
-        excitatoryLayer = sim->createGroup("Excitatory", neuronNumbers, EXCITATORY_NEURON);
-        sim->setNeuronParameters(excitatoryLayer, 0.02f, 0.2f, -65.0f, 8.0f); // Izhikevich params
-
-        sim->connect(inputLayer, excitatoryLayer, "full", RangeWeight(0.1f), 1.0f, RangeDelay(1), RadiusRF(-1), SYN_FIXED);
-        sim->setConductances(true);
-
-        sim->setSpikeMonitor(inputLayer, "DEFAULT");
-        sim->setSpikeMonitor(excitatoryLayer, "DEFAULT");
-    }
-
-    ~SNNPrefetcher() { delete sim; }
-
-    void invoke_prefetcher(uint64_t pc, uint64_t address, uint8_t cache_hit, uint8_t type, std::vector<uint64_t> &pref_addr) override
-    {
-        std::vector<int> deltaPattern = {static_cast<int>(pc % 10), static_cast<int>(address % 10), static_cast<int>(type)};
-        auto [outputNeurons, predictionDeltas] = makePrediction(deltaPattern);
-
-        if (!predictionDeltas.empty())
-        {
-            for (int delta : predictionDeltas)
-            {
-                uint64_t predictedAddr = address + delta;
-                pref_addr.push_back(predictedAddr);
-            }
-        }
-    }
-
-    void dump_stats() override
-    {
-        std::cout << "SNN Prefetcher Statistics:" << std::endl;
-        std::cout << "Number of neurons: " << neuronNumbers << std::endl;
-    }
-
-    void print_config() override
-    {
-        std::cout << "SNN Prefetcher Configuration:" << std::endl;
-        std::cout << "Pattern length: " << patternLength << std::endl;
-        std::cout << "Delta range length: " << deltaRangeLength << std::endl;
-        std::cout << "Timestamps: " << timestamps << std::endl;
-    }
-};
-
-#endif /* PREFETCHER_H */
+void PathfinderPrefetcher::dump_stats()
+{
+}

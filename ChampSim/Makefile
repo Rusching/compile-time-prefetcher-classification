@@ -4,14 +4,21 @@ srcExt = cc
 srcDir = src branch replacement prefetcher
 objDir = obj
 binDir = bin
-inc = inc
+inc = inc	
 
 debug = 1
 
-CFlags = -Wall -O3 -std=c++11 -D_DEFAULT_SOURCE -I./libbf/ -w # -Wno-unused-variable -Wno-deprecated-declarations
-CFlags += -I./CARLsim/include # Include CARLsim headers
-LDFlags = ./libbf/build/lib/libbf.a
-LDFlags += -L./CARLsim/build -lcarlsim # Link CARLsim libraries
+CFlags = -Wall -O3 -std=c++11 -D_DEFAULT_SOURCE -I./libbf/ -w # General compiler flags
+LDFlags = ./libbf/build/lib/libbf.a # Linker flags for libbf
+
+# Link snnpp libraries
+CFlags += -I./snnpp/include
+LDFlags += -L./snnpp/build -lsnnpp
+
+# Link OpenCV libraries
+CFlags += $(shell pkg-config --cflags opencv4)
+LDFlags += $(shell pkg-config --libs opencv4)
+
 libs =
 libDir =
 

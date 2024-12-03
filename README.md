@@ -6,15 +6,27 @@ This project integrates a prefetcher classification system into the Pythia Champ
 
 ## Installation  
 
+1. Prerequesites
+
+Have `perl` and the `opencv` C++ library installed on your machine. The following commands can be used to verify this:
+
+    bash
+# perl
+perl -v
+
+# opencv
+ls /usr/lib | grep opencv
+```
+
 To streamline the setup process, two new scripts have been added to the ChampSim directory. Follow these steps to get started:  
 
-1. Navigate to the ChampSim directory:  
+2. Navigate to the ChampSim directory:  
 
    ```bash  
    cd ChampSim  
    ```  
 
-2. Run the setup script:  
+3. Run the setup script:  
 
    ```bash  
    ./setup_champsim.sh  

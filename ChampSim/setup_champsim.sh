@@ -37,7 +37,7 @@ fi
 
 # Define script variables
 LIBBF_DIR="$PYTHIA_HOME/libbf"
-CARLSIM_DIR=$PYTHIA_HOME/CARLsim
+SNN_DIR="$PYTHIA_HOME/snnpp"
 TRACES_DIR="$PYTHIA_HOME/traces"
 MEGATOOLS_URL="https://megatools.megous.com/builds/builds/megatools-1.11.1.20230212-linux-x86_64.tar.gz"
 
@@ -62,37 +62,36 @@ fi
 
 if [[ "$TEST_MODE" == "true" || "$bloomfilter_dir_existed" == "false" ]]; then
     echo "Building bloomfilter library..."
-    cd "$LIBBF_DIR" || { echo "Failed to access CARLsim directory"; exit 1; }
+    cd "$LIBBF_DIR" || { echo "Failed to access SNN directory"; exit 1; }
     mkdir -p build || { echo "Failed to create build directory"; exit 1; }
     cd build || { echo "Failed to access build directory"; exit 1; }
     cmake || { echo "CMake configuration failed"; exit 1; }
     make clean && make || { echo "Failed to build bloomfilter library"; exit 1; }
 fi
 
-# Clone and build the CARLsim library
-carlsim_dir_existed=false
-if [[ -d "$CARLSIM_DIR" ]]; then
-    carlsim_dir_existed=true
+# Clone and build the SNN library
+SNN_dir_existed=false
+if [[ -d "$SNN_DIR" ]]; then
+    SNN_dir_existed=true
 else
-    echo "Cloning CARLsim library..."
+    echo "Cloning SNN library..."
     cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
-    git clone --recursive https://github.com/UCI-CARL/CARLsim4.git CARLsim || { echo "Failed to clone CARLsim library"; exit 1; }
+    git clone git@github.com:ianmkim/snnpp.git || { echo "Failed to clone SNN library"; exit 1; }
 fi
 
-if [[ "$TEST_MODE" == "true" || "$carlsim_dir_existed" == "false" ]]; then
-    echo "Building CARLsim library..."
-    export CARLSIM4_INSTALL_DIR="$(pwd)/$CARLSIM_DIR"
-    cd "$CARLSIM_DIR" || { echo "Failed to access CARLsim directory"; exit 1; }
+if [[ "$TEST_MODE" == "true" || "$SNN_dir_existed" == "false" ]]; then
+    echo "Building SNN library..."
+    cd "$SNN_DIR" || { echo "Failed to access SNN directory"; exit 1; }
     mkdir -p build || { echo "Failed to create build directory"; exit 1; }
     cd build || { echo "Failed to access build directory"; exit 1; }
-    cmake \
-        -DCMAKE_INSTALL_PREFIX="$CARLSIM_DIR" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCARLSIM_NO_CUDA=ON \
-        .. || { echo "CMake configuration failed"; exit 1; }
-    make clean && make -j$(nproc) || { echo "Failed to build CARLsim library"; exit 1; }
-    echo "Installing CARLsim library..."
-    make install || { echo "Failed to install CARLsim library"; exit 1; }
+    cmake .. || { echo "CMake configuration failed"; exit 1; }
+    make clean && make || { echo "Failed to build SNN library"; exit 1; }
+
+    if [[ "$TEST_MODE" == "true" ]]; then
+        echo "Testing C++ Spiking Neural Network library..."
+        cd ..
+        ./build/unit_tests
+    fi
 fi
 
 # Build Pythia
