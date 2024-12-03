@@ -25,3 +25,4 @@ libbf/
 rollup_*.csv
 CARLsim/
 snnpp/
+**/jobfile*.sh
