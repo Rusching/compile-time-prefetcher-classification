@@ -1,0 +1,19 @@
+##############################################################
+##
+## This file contains all the experiments required
+## to reproduce single-core performance results of Pythia.
+##
+## Please follow the README to know how to use this file.
+## 
+## Owner: Rahul Bera (write2bera@gmail.com)
+##
+###############################################################
+
+
+# configurations
+BASE = --warmup_instructions=100000000 --simulation_instructions=500000000
+NOPREF = --config=$(PYTHIA_HOME)/config/nopref.ini
+PMP = --l2c_prefetcher_types=pmp --config=$(PYTHIA_HOME)/config/pmp.ini
+
+# experiments for Figure 10(a) and Figure 8
+pmp						$(BASE) $(PMP)
