@@ -19,6 +19,7 @@
 #include "ampm.h"
 #include "streamer.h"
 #include "pref_power7.h"
+#include "pathfinder.h"
 
 using namespace std;
 
@@ -126,6 +127,12 @@ void CACHE::l2c_prefetcher_initialize()
 			cout << "adding L2C_PREFETCHER: AMPM" << endl;
 			AMPM *pref_ampm = new AMPM(knob::l2c_prefetcher_types[index]);
 			prefetchers.push_back(pref_ampm);
+		}
+		else if (!knob::l2c_prefetcher_types[index].compare("pathfinder"))
+		{
+			cout << "adding L2C_PREFETCHER: PATHFINDER" << endl;
+			PathfinderPrefetcher *pref_pf = new PathfinderPrefetcher(knob::l2c_prefetcher_types[index]);
+			prefetchers.push_back(pref_pf);
 		}
 		else
 		{

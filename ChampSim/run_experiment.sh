@@ -71,7 +71,7 @@ else
 fi
 
 # Define variables
-EXE="$PYTHIA_HOME/bin/perceptron-pmp-no-no-ship-1core"
+EXE="$PYTHIA_HOME/bin/perceptron-multi-multi-no-ship-1core"
 ROLLUP_SCRIPT="$PYTHIA_HOME/scripts/rollup.pl"
 EXPERIMENTS_DIR="$PYTHIA_HOME/experiments"
 

@@ -8,7 +8,7 @@ inc = inc
 
 debug = 1
 
-CFlags = -Wall -O3 -std=c++11 -D_DEFAULT_SOURCE -I./libbf/ -w # General compiler flags
+CFlags = -Wall -O3 -std=c++11 -D_DEFAULT_SOURCE -I./libbf/ # -w # General compiler flags
 LDFlags = ./libbf/build/lib/libbf.a # Linker flags for libbf
 
 # Link snnpp libraries

@@ -17,7 +17,7 @@ update_progress() {
 }
 echo -e '\nStarting jobs...'
 update_progress
-/home/shichen/os/compile-time-prefetcher-classification/ChampSim/bin/perceptron-pmp-no-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --l2c_prefetcher_types=pmp --config=/home/shichen/os/compile-time-prefetcher-classification/ChampSim/config/pmp.ini  -traces /home/shichen/os/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_pmp.out 2>&1
+/Users/maxgoetzmann/dev/compile-time-prefetcher-classification/ChampSim/bin/perceptron-multi-multi-no-ship-1core --warmup_instructions=100000000 --simulation_instructions=500000000 --config=/Users/maxgoetzmann/dev/compile-time-prefetcher-classification/ChampSim/config/nopref.ini  -traces /Users/maxgoetzmann/dev/compile-time-prefetcher-classification/ChampSim/traces/403.gcc-16B.champsimtrace.xz > 403.gcc-16B_nopref.out 2>&1
 ((job_counter++))
 update_progress
 

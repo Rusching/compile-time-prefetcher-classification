@@ -14,6 +14,9 @@
 BASE = --warmup_instructions=100000000 --simulation_instructions=500000000
 NOPREF = --config=$(PYTHIA_HOME)/config/nopref.ini
 PMP = --l2c_prefetcher_types=pmp --config=$(PYTHIA_HOME)/config/pmp.ini
+PATHFINDER = --l2c_prefetcher_types=pathfinder --config=$(PYTHIA_HOME)/config/pathfinder.ini
 
 # experiments for Figure 10(a) and Figure 8
-pmp						$(BASE) $(PMP)
+#pmp						$(BASE) $(PMP)
+pathfinder                  $(BASE) $(PATHFINDER)
+#nopref						$(BASE) $(NOPREF)

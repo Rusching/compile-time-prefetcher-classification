@@ -2,10 +2,15 @@
 
 # Parse arguments for test mode
 TEST_MODE=false
+FAST_MODE=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --test)
             TEST_MODE=true
+            shift
+            ;;
+        --fast)
+            FAST_MODE=true
             shift
             ;;
         *)
@@ -50,36 +55,34 @@ else
     echo "Perl is already installed."
 fi
 
-# Clone and build the bloomfilter library
-bloomfilter_dir_existed=false
-if [[ -d "$LIBBF_DIR" ]]; then
-    bloomfilter_dir_existed=true
-else
-    echo "Cloning bloomfilter library..."
-    cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
-    git clone https://github.com/mavam/libbf.git libbf || { echo "Failed to clone bloomfilter library"; exit 1; }
-fi
+if [[ "$FAST_MODE" = "false" ]]; then
+    # Clone and build the bloomfilter library
+    bloomfilter_dir_existed=false
+    if [[ -d "$LIBBF_DIR" ]]; then
+        bloomfilter_dir_existed=true
+    else
+        echo "Cloning bloomfilter library..."
+        cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
+        git clone https://github.com/mavam/libbf.git libbf || { echo "Failed to clone bloomfilter library"; exit 1; }
+    fi
 
-if [[ "$TEST_MODE" == "true" || "$bloomfilter_dir_existed" == "false" ]]; then
     echo "Building bloomfilter library..."
-    cd "$LIBBF_DIR" || { echo "Failed to access SNN directory"; exit 1; }
+    cd "$LIBBF_DIR" || { echo "Failed to access bloomfilter directory"; exit 1; }
     mkdir -p build || { echo "Failed to create build directory"; exit 1; }
     cd build || { echo "Failed to access build directory"; exit 1; }
-    cmake || { echo "CMake configuration failed"; exit 1; }
+    cmake ../ || { echo "CMake configuration failed"; exit 1; }
     make clean && make || { echo "Failed to build bloomfilter library"; exit 1; }
-fi
 
-# Clone and build the SNN library
-SNN_dir_existed=false
-if [[ -d "$SNN_DIR" ]]; then
-    SNN_dir_existed=true
-else
-    echo "Cloning SNN library..."
-    cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
-    git clone git@github.com:ianmkim/snnpp.git || { echo "Failed to clone SNN library"; exit 1; }
-fi
+    # Clone and build the SNN library
+    SNN_dir_existed=false
+    if [[ -d "$SNN_DIR" ]]; then
+        SNN_dir_existed=true
+    else
+        echo "Cloning SNN library..."
+        cd "$PYTHIA_HOME" || { echo "Failed to access $PYTHIA_HOME"; exit 1; }
+        git clone git@github.com:ianmkim/snnpp.git || { echo "Failed to clone SNN library"; exit 1; }
+    fi
 
-if [[ "$TEST_MODE" == "true" || "$SNN_dir_existed" == "false" ]]; then
     echo "Building SNN library..."
     cd "$SNN_DIR" || { echo "Failed to access SNN directory"; exit 1; }
     mkdir -p build || { echo "Failed to create build directory"; exit 1; }
@@ -94,7 +97,10 @@ if [[ "$TEST_MODE" == "true" || "$SNN_dir_existed" == "false" ]]; then
     fi
 fi
 
+
 # Build Pythia
+export DYLD_LIBRARY_PATH="$PYTHIA_HOME"/snnpp/build/libsnnpp.dylib:$DYLD_LIBRARY_PATH
+
 echo "Building Pythia..."
 cd $PYTHIA_HOME
 if [ ! -f "./build_champsim.sh" ]; then
@@ -102,30 +108,38 @@ if [ ! -f "./build_champsim.sh" ]; then
     exit 1
 fi
 ./build_champsim.sh multi multi no 1 || { echo "Failed to build Pythia"; exit 1; }
+# make clean && make
 
-# Download and prepare traces
-if [ ! -d "$TRACES_DIR" ]; then
-    echo "Creating traces directory..."
-    mkdir -p $TRACES_DIR
+if command -v install_name_tool &> /dev/null
+then
+    install_name_tool -add_rpath "$PYTHIA_HOME/snnpp/build" "$PYTHIA_HOME/bin/perceptron-multi-multi-no-ship-1core"
 fi
 
-cd $PYTHIA_HOME/scripts
+if [[ $FAST_MODE = "false" ]]; then
+    # Download and prepare traces
+    if [ ! -d "$TRACES_DIR" ]; then
+        echo "Creating traces directory..."
+        mkdir -p $TRACES_DIR
+    fi
 
-# Download traces using Perl script if not already downloaded
-if [ ! "$(ls -A $TRACES_DIR)" ]; then
-    echo "Downloading traces..."
-    perl download_traces.pl --csv $TRACE_FILE --dir ../traces/ || { echo "Trace download failed. Use Google Drive links."; exit 1; }
-else
-    echo "Traces already downloaded."
-fi
+    cd $PYTHIA_HOME/scripts
 
-# Verify checksum
-echo "Verifying checksum..."
-cd $TRACES_DIR
-if [ -f "../scripts/$CHECKSUM_FILE" ]; then
-    md5sum -c ../scripts/$CHECKSUM_FILE || echo "Checksum verification failed. Recheck traces."
-else
-    echo "Checksum file $CHECKSUM_FILE not found!"
+    # Download traces using Perl script if not already downloaded
+    if [ ! "$(ls -A $TRACES_DIR)" ]; then
+        echo "Downloading traces..."
+        perl download_traces.pl --csv $TRACE_FILE --dir ../traces/ || { echo "Trace download failed. Use Google Drive links."; exit 1; }
+    else
+        echo "Traces already downloaded."
+    fi
+
+    # Verify checksum
+    echo "Verifying checksum..."
+    cd $TRACES_DIR
+    if [ -f "../scripts/$CHECKSUM_FILE" ]; then
+        md5sum -c ../scripts/$CHECKSUM_FILE || echo "Checksum verification failed. Recheck traces."
+    else
+        echo "Checksum file $CHECKSUM_FILE not found!"
+    fi
 fi
 
 echo "Setup completed successfully."

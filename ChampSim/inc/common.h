@@ -7,7 +7,6 @@
 #define CPLX_TYPE 3 // complex stride
 #define NL_TYPE 4   // next line
 
-
 #define ADD(x, MAX) (x = x >= MAX ? x : x + 1)
 #define ADD_ANY(x, y, MAX) (x = x + y >= MAX ? MAX : x + y)
 #define TIME(x, y, MAX) (x = x * y > MAX ? MAX : x * y)
@@ -17,9 +16,9 @@
 #define FLIP(x) (~x)
 
 #include <stdint.h>
-#include <bits/stdc++.h>
 #include <vector>
 #include <unordered_map>
+#include <sstream>
 
 using namespace std;
 
@@ -32,13 +31,15 @@ vector<bool> pattern_convert2(const vector<uint32_t> &x);
 vector<int> pattern_convert(const vector<bool> &x);
 vector<bool> pattern_degrade(const vector<bool> &x, int level);
 
-double jaccard_similarity(vector<bool> pattern1, vector<bool> pattern2) ;
-double jaccard_similarity(vector<bool> pattern1, vector<int> pattern2) ;
+double jaccard_similarity(vector<bool> pattern1, vector<bool> pattern2);
+double jaccard_similarity(vector<bool> pattern1, vector<int> pattern2);
 int pattern_distance(uint64_t p1, uint64_t p2);
-uint64_t hash_index(uint64_t key, int index_len) ;
+uint64_t hash_index(uint64_t key, int index_len);
 uint32_t encode_metadata(int stride, uint16_t type, int spec_nl);
 
-template <class T> string pattern_to_string(const vector<T> &pattern) {
+template <class T>
+string pattern_to_string(const vector<T> &pattern)
+{
     ostringstream oss;
     for (unsigned i = 0; i < pattern.size(); i += 1)
         oss << int(pattern[i]) << " ";
