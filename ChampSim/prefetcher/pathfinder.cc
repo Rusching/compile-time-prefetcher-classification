@@ -8,19 +8,6 @@
 
 #include "receptive_field.hpp"
 
-namespace knob
-{
-extern uint32_t pf_pattern_len;
-extern int32_t pf_confidence_threshold;
-extern int32_t pf_min_confidence;
-extern uint32_t pf_delta_range_len;
-extern uint32_t pf_neuron_numbers;
-extern uint32_t pf_timestamps;
-extern uint32_t pf_input_intensity;
-uint32_t
-    pf_max_confidence; // Really dumb that they forgot to make this a constant
-} // namespace knob
-
 /* Constructor. */
 PathfinderPrefetcher::PathfinderPrefetcher(string type)
     : Prefetcher(type),
@@ -47,6 +34,7 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
 {
     // Memory allocation and bitmask calculation
     last_addr = 0;
+    last_pred = 0;
     page_bits = log2(PAGE_SIZE);
     cache_block_bits = log2(BLOCK_SIZE);
 
@@ -55,19 +43,6 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
 
     training_table_PC_len = 8;
     training_table_page_len = 128;
-
-    try
-    {
-        prediction_table =
-            std::make_unique<list<prediction_table_info_t>[]>(net.out_dim);
-        offsets = std::make_unique<int[]>(net.inp_y);
-    }
-    catch (const std::exception &e)
-    {
-        cerr << "Error during initialization of smart pointers for Pathfinder: "
-             << e.what() << endl;
-        throw;
-    }
 
     // Debugging output
     cout << knob::pf_pattern_len << "x" << knob::pf_delta_range_len << " matrix"
@@ -105,38 +80,45 @@ void PathfinderPrefetcher::print_config()
          << knob::pf_delta_range_len << " col matrix" << endl;
 }
 
-void PathfinderPrefetcher::update_pixel_matrix(uint64_t address,
-                                               bool page_change, int offset_idx)
+void PathfinderPrefetcher::update_pixel_matrix(int new_delta,
+                                               int *old_delta_pattern)
 {
-    int offset_down = max(offset_idx - 1, 0);
-    int offset_up = min(offset_idx + 1, this->net.inp_x - 1);
+    int offset;
 
-    /* Set up pixel matrix special case for a new page. */
-    if (page_change)
+    /* Set every row to 0. */
+    mat.setTo(0);
+
+    /* First row. */
+    offset = old_delta_pattern[1 % net.inp_y];
+    mat.at<int>(0, offset) = knob::pf_input_intensity;
+    mat.at<int>(0, (offset - 1) % net.inp_x) = knob::pf_input_intensity;
+    mat.at<int>(0, (offset + 1) % net.inp_x) = knob::pf_input_intensity;
+    mat.at<int>(1 % net.inp_y, offset) = knob::pf_input_intensity;
+    mat.at<int>(net.inp_y - 1, offset) = knob::pf_input_intensity;
+
+    /* Middle rows. */
+    int prime = knob::pf_middle_offset;
+    for (int j = 1; j < net.inp_y - 1; j++)
     {
-        cout << "trying page change" << endl;
 
-        /* Set every row to 0. */
-        mat.setTo(0);
+        offset = old_delta_pattern[j] + prime;
 
-        /* Set the first row, column determined by address, to 1. */
-        mat.at<int>(0, offset_down) = knob::pf_input_intensity;
-        mat.at<int>(0, offset_idx) = knob::pf_input_intensity;
-        mat.at<int>(0, offset_up) = knob::pf_input_intensity;
-        return;
+        mat.at<int>(j, offset) = knob::pf_input_intensity;
+        mat.at<int>(0, (offset - 1) % net.inp_x) = knob::pf_input_intensity;
+        mat.at<int>(0, (offset + 1) % net.inp_x) = knob::pf_input_intensity;
+        mat.at<int>(j + 1, offset) = knob::pf_input_intensity;
+        mat.at<int>(j - 1, offset) = knob::pf_input_intensity;
+
+        prime = (prime + knob::pf_middle_offset) % net.inp_x
     }
 
-    cout << "trying established history prefetch" << endl;
-
-    /* Move rows up by one. */
-    for (int i = 0; i < this->net.inp_y - 1; i++)
-    {
-        mat.row(i) = mat.row(i + 1);
-    }
-    mat.row(this->net.inp_y - 1) = cv::Scalar(0);
-    mat.at<int>(this->net.inp_y - 1, offset_down) = knob::pf_input_intensity;
-    mat.at<int>(this->net.inp_y - 1, offset_idx) = knob::pf_input_intensity;
-    mat.at<int>(this->net.inp_y - 1, offset_up) = knob::pf_input_intensity;
+    /* Last row. */
+    offset = new_delta;
+    mat.at<int>(0, offset) = knob::pf_input_intensity;
+    mat.at<int>(0, (offset - 1) % net.inp_x) = knob::pf_input_intensity;
+    mat.at<int>(0, (offset + 1) % net.inp_x) = knob::pf_input_intensity;
+    mat.at<int>((net.inp_y + 1) % net.inp_y, offset) = knob::pf_input_intensity;
+    mat.at<int>(net.inp_y - 1, offset) = knob::pf_input_intensity;
 }
 
 vector<int> PathfinderPrefetcher::custom_train(const int epochs)
@@ -176,23 +158,105 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
     if (iteration++ % iter_freq == 0)
         cout << "On iteration " << iteration - 1 << endl;
 
-    /* Calculate page, address, and deltas. */
-    bool page_change = !((last_addr & page_mask) == (address & page_mask));
+    /* Calculate memory access values. */
     uint64_t page_offset = (address >> cache_block_bits) & block_mask;
     uint64_t page = (address >> page_bits) << page_bits;
+    int offset_idx = page_offset + net.inp_x / 2;
 
-    /* Update input pixel matrix. */
-    int offset_idx = offset + this->net.inp_x / 2;
-    update_pixel_matrix(address, page_change, offset_idx);
+    /* Increment / decrement confidence of previous predictions. */
+    uint64_t last_page_offset = ((last_addr >> cache_block_bits) & block_mask)
+                                << cache_block_bits;
+    uint64_t last_page = (last_addr >> page_bits) << page_bits;
+
+    prediction_table_info_t *pt;
+    for (int i = 0; i < knob::pf_max_degree; i++)
+    {
+        pt = &(prediction_table[last_pred][i]);
+
+        /* Ignore empty entries. */
+        if (!pt->valid)
+            continue;
+
+        /* Strengthen confidence. */
+        if (page == last_page && page_offset - last_page_offset == pt->delta)
+        {
+            pt->confidence += 1;
+            if (pt->confidence > knob::pf_max_confidence)
+                pt->confidence = knob::pf_max_confidence;
+        }
+        /* Weaken confidence or free neuron to be assigned to new delta. */
+        else
+        {
+            pt->confidence -= 1;
+            if (pt->confidence < knob::pf_min_confidence)
+                pt->valid = false;
+        }
+    }
+
+    int *offset_arr;
+    int delta;
+    training_table_info_t *tt;
+
+    /* If PC + page in training table, extract its deltas, calculate the new
+     * delta, save it. */
+    if (true)
+    {
+    }
+    /* If not in training table, create an entry, create the offset entry, save
+     * entry.*/
+    else
+    {
+        delta = page_offset;
+    }
+
+    /* Prep pattern. */
+    update_pixel_matrix(delta, offset_arr);
 
     /* Feed into neural network. */
     vector<int> spikes = custom_train(1);
 
-    /* Update prediction table. */
+    /* Make prediction. Just get the maximum firing neuron index for now. */
+    auto max_it = std::max_element(spikes.begin(), spikes_per_neuron.end());
+    int max_index = std::distance(spikes.begin(), max_it);
 
-    /* Complete prefetch. */
-    pref_addr.push_back(address);
+    /* Set fired_neuron for training table. */
+    tt->fired_neuron = max_index;
+    tt->evict = lru_evict++;
+
+    /* Add predictions. */
+    bool delta_repped = false;
+    for (int i = 0; i < knob::pf_max_degree; i++)
+    {
+        pt = &(prediction_table[max_index][i]);
+
+        /* Track if current delta is represented. */
+        delta_repped = delta_repped || (pt->valid && (pt->delta == delta));
+
+        pref_addr.push_back(page + (pt->delta << cache_block_bits));
+    }
+
+    /* If there is an open space and this delta is not represented, claim it for
+     * this delta. */
+    if (!delta_repped)
+    {
+        for (int i = 0; i < knob::pf_max_degree; i++)
+        {
+            pt = &(prediction_table[max_index][i]);
+
+            /* Add delta to only invalid entries. */
+            if (pt->valid)
+                continue;
+
+            pt->confidence = 0;
+            pt->valid = true;
+            pt->delta = delta;
+            break;
+        }
+    }
+
+    /* Cleanup. */
     last_addr = address;
+    last_pred = max_index;
 }
 
 void PathfinderPrefetcher::dump_stats()
@@ -438,37 +502,42 @@ float PathfinderPrefetcher::custom_reinforcement_learning(int time)
     return net.a_minus * exp((float)(time) / net.tau_minus);
 }
 
-bool PathfinderPrefetcher::check_hit(uint64_t pc, uint64_t page,
-                                     uint64_t page_offset)
+void PathfinderPrefetcher::add_predictions_to_queue(uint64_t pc, uint64_t page,
+                                                    uint64_t page_offset,
+                                                    vector<uint64_t> &pref_addr)
 {
     /* Not in training table yet. */
     if (training_table.find(pc) == training_table.end())
-        return false;
+        return;
 
     if (training_table[pc] == nullptr)
-        return false;
+        return;
 
     std::unordered_map<uint64_t, unique_ptr<training_table_info_t>> &page_map =
         training_table[pc]->page;
     if (page_map.find(page) == page_map.end())
-        return false;
+        return;
 
     training_table_info_t *tt = page_map[page].get();
 
     if (prediction_table.find(tt->fired_neuron) == prediction_table.end())
-        return false;
+        return;
 
     std::list<prediction_table_info_t> pts =
         prediction_table.get()[tt->fired_neuron];
 
     for (auto it = pts.begin(); it != pts.end();)
     {
+        /* For in same page. */
         if (it->label == page_offset - tt->last_offset)
         {
             if (it->confidence < knob::pf_max_confidence)
                 it->confidence += 1;
-            return true;
+
+            pref_addr.push_back(page + (page_offset << cache_block_bits));
         }
+
+        /* For in different page. */
 
         if (it->confidence < knob::pf_min_confidence)
         {
@@ -482,6 +551,4 @@ bool PathfinderPrefetcher::check_hit(uint64_t pc, uint64_t page,
             ++it;
         }
     }
-
-    return false;
 }
