@@ -28,7 +28,6 @@ typedef struct prediction_table_info
 {
     int label;
     int confidence;
-    bool valid;
 } prediction_table_info_t;
 
 class PathfinderPrefetcher : public Prefetcher
@@ -37,10 +36,8 @@ class PathfinderPrefetcher : public Prefetcher
     Network net;
 
     /* Training tables. */
-    unordered_map<uint64_t,
-                  unordered_map<uint64_t, unique_ptr<training_table_info_t>>>
-        training_table;
-    unique_ptr<prediction_table_info_t[]> prediction_table;
+    unordered_map<uint64_t, unique_ptr<lru_pc_t>> training_table;
+    unique_ptr<list<prediction_table_info_t>[]> prediction_table;
 
     cv::Mat mat;
     unique_ptr<int[]> offsets;
@@ -72,6 +69,7 @@ class PathfinderPrefetcher : public Prefetcher
     void custom_update_weights(vector<vector<float>> &spike_train, int t);
     float custom_stdp_update(float w, float delta_w);
     float custom_reinforcement_learning(int time);
+    bool check_hit(uint64_t pc, uint64_t page, uint64_t page_offset);
 
   public:
     PathfinderPrefetcher(string type);

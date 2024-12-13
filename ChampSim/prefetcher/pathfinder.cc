@@ -17,6 +17,8 @@ extern uint32_t pf_delta_range_len;
 extern uint32_t pf_neuron_numbers;
 extern uint32_t pf_timestamps;
 extern uint32_t pf_input_intensity;
+uint32_t
+    pf_max_confidence; // Really dumb that they forgot to make this a constant
 } // namespace knob
 
 /* Constructor. */
@@ -57,7 +59,7 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
     try
     {
         prediction_table =
-            std::make_unique<prediction_table_info_t[]>(net.out_dim);
+            std::make_unique<list<prediction_table_info_t>[]>(net.out_dim);
         offsets = std::make_unique<int[]>(net.inp_y);
     }
     catch (const std::exception &e)
@@ -87,18 +89,6 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
 // Destructor
 PathfinderPrefetcher::~PathfinderPrefetcher()
 {
-    for (auto &outer_pair : training_table)
-    {
-        for (auto &inner_pair : outer_pair.second)
-        {
-            free_training_table_info(inner_pair.second);
-        }
-        outer_pair.second.clear(); // Clear the inner map
-    }
-    training_table.clear(); // Clear the outer map
-
-    free(offsets);
-    free(prediction_table);
 }
 
 void PathfinderPrefetcher::init_knobs()
@@ -446,4 +436,52 @@ float PathfinderPrefetcher::custom_reinforcement_learning(int time)
     }
 
     return net.a_minus * exp((float)(time) / net.tau_minus);
+}
+
+bool PathfinderPrefetcher::check_hit(uint64_t pc, uint64_t page,
+                                     uint64_t page_offset)
+{
+    /* Not in training table yet. */
+    if (training_table.find(pc) == training_table.end())
+        return false;
+
+    if (training_table[pc] == nullptr)
+        return false;
+
+    std::unordered_map<uint64_t, unique_ptr<training_table_info_t>> &page_map =
+        training_table[pc]->page;
+    if (page_map.find(page) == page_map.end())
+        return false;
+
+    training_table_info_t *tt = page_map[page].get();
+
+    if (prediction_table.find(tt->fired_neuron) == prediction_table.end())
+        return false;
+
+    std::list<prediction_table_info_t> pts =
+        prediction_table.get()[tt->fired_neuron];
+
+    for (auto it = pts.begin(); it != pts.end();)
+    {
+        if (it->label == page_offset - tt->last_offset)
+        {
+            if (it->confidence < knob::pf_max_confidence)
+                it->confidence += 1;
+            return true;
+        }
+
+        if (it->confidence < knob::pf_min_confidence)
+        {
+            // Remove the current element and move the iterator forward
+            it = pts.erase(it);
+        }
+        else
+        {
+            // Decrease confidence and move the iterator forward
+            it->confidence -= 1;
+            ++it;
+        }
+    }
+
+    return false;
 }
