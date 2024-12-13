@@ -44,13 +44,28 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
       )
 {
     // Memory allocation and bitmask calculation
-    offsets = (u_char *)calloc(knob::pf_pattern_len, sizeof(u_char));
     last_addr = 0;
     page_bits = log2(PAGE_SIZE);
     cache_block_bits = log2(BLOCK_SIZE);
 
     block_mask = (1 << (page_bits - cache_block_bits)) - 1;
     page_mask = (1 << page_bits) - 1;
+
+    training_table_PC_len = 8;
+    training_table_page_len = 128;
+
+    try
+    {
+        prediction_table =
+            std::make_unique<prediction_table_info_t[]>(net.out_dim);
+        offsets = std::make_unique<int[]>(net.inp_y);
+    }
+    catch (const std::exception &e)
+    {
+        cerr << "Error during initialization of smart pointers for Pathfinder: "
+             << e.what() << endl;
+        throw;
+    }
 
     // Debugging output
     cout << knob::pf_pattern_len << "x" << knob::pf_delta_range_len << " matrix"
@@ -72,7 +87,18 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
 // Destructor
 PathfinderPrefetcher::~PathfinderPrefetcher()
 {
+    for (auto &outer_pair : training_table)
+    {
+        for (auto &inner_pair : outer_pair.second)
+        {
+            free_training_table_info(inner_pair.second);
+        }
+        outer_pair.second.clear(); // Clear the inner map
+    }
+    training_table.clear(); // Clear the outer map
+
     free(offsets);
+    free(prediction_table);
 }
 
 void PathfinderPrefetcher::init_knobs()
@@ -104,9 +130,9 @@ void PathfinderPrefetcher::update_pixel_matrix(uint64_t address,
         mat.setTo(0);
 
         /* Set the first row, column determined by address, to 1. */
-        mat.at<u_char>(0, offset_down) = knob::pf_input_intensity;
-        mat.at<u_char>(0, offset_idx) = knob::pf_input_intensity;
-        mat.at<u_char>(0, offset_up) = knob::pf_input_intensity;
+        mat.at<int>(0, offset_down) = knob::pf_input_intensity;
+        mat.at<int>(0, offset_idx) = knob::pf_input_intensity;
+        mat.at<int>(0, offset_up) = knob::pf_input_intensity;
         return;
     }
 
@@ -118,9 +144,9 @@ void PathfinderPrefetcher::update_pixel_matrix(uint64_t address,
         mat.row(i) = mat.row(i + 1);
     }
     mat.row(this->net.inp_y - 1) = cv::Scalar(0);
-    mat.at<u_char>(this->net.inp_y - 1, offset_down) = knob::pf_input_intensity;
-    mat.at<u_char>(this->net.inp_y - 1, offset_idx) = knob::pf_input_intensity;
-    mat.at<u_char>(this->net.inp_y - 1, offset_up) = knob::pf_input_intensity;
+    mat.at<int>(this->net.inp_y - 1, offset_down) = knob::pf_input_intensity;
+    mat.at<int>(this->net.inp_y - 1, offset_idx) = knob::pf_input_intensity;
+    mat.at<int>(this->net.inp_y - 1, offset_up) = knob::pf_input_intensity;
 }
 
 vector<int> PathfinderPrefetcher::custom_train(const int epochs)
@@ -138,7 +164,7 @@ vector<int> PathfinderPrefetcher::custom_train(const int epochs)
         {
             for (int j = 0; j < mat.cols; j++)
             {
-                potential[i][j] = static_cast<float>(mat.at<u_char>(i, j));
+                potential[i][j] = static_cast<float>(mat.at<int>(i, j));
             }
         }
 
@@ -160,13 +186,13 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
     if (iteration++ % iter_freq == 0)
         cout << "On iteration " << iteration - 1 << endl;
 
-    /* Update input pixel matrix. */
+    /* Calculate page, address, and deltas. */
     bool page_change = !((last_addr & page_mask) == (address & page_mask));
-    int offset =
-        (static_cast<int64_t>(address) - static_cast<int64_t>(last_addr)) &
-        block_mask;
-    int offset_idx = offset + this->net.inp_x / 2;
+    uint64_t page_offset = (address >> cache_block_bits) & block_mask;
+    uint64_t page = (address >> page_bits) << page_bits;
 
+    /* Update input pixel matrix. */
+    int offset_idx = offset + this->net.inp_x / 2;
     update_pixel_matrix(address, page_change, offset_idx);
 
     /* Feed into neural network. */
@@ -183,15 +209,6 @@ void PathfinderPrefetcher::dump_stats()
 {
 }
 
-/*
- * train_on_potential
- * adjust the weights of the network for one simulation run (0-200 time units)
- * based on one single input image (which must be preprocessed into membrane
- * potential)
- *
- * @param potential
- * @return the number of spikes of every neuron
- */
 vector<int> PathfinderPrefetcher::custom_train_on_potential(
     vector<vector<float>> &potential)
 {
@@ -206,8 +223,6 @@ vector<int> PathfinderPrefetcher::custom_train_on_potential(
     // get a custom threshold for the given image
     float thresh = threshold(spike_train);
     // std::cout << "This is line number: " << __LINE__ << std::endl;
-
-    float var_D = 0.15 * this->net.scale;
 
     for (int i = 0; i < this->net.layer2.size(); i++)
         this->net.layer2.at(i).initial(thresh);
@@ -224,64 +239,60 @@ vector<int> PathfinderPrefetcher::custom_train_on_potential(
     // simulate the network through the entire time period
     for (int t = 1; t <= this->net.max_time; t++)
     {
-        // iterate through all the output neurons
+        // Iterate through all the output neurons
         for (int j = 0; j < this->net.layer2.size(); j++)
         {
             Neuron *neuron = &this->net.layer2.at(j);
-            // std::cout << "This is line number: " << __LINE__ << std::endl;
 
             if (neuron->t_reset < t)
             {
-                // simulate the potential accumulation in the neuron
-                // by doing a dot product of the input spike train with the
-                // synaptic weights for the current neuron
+                // Simulate potential accumulation from input
                 vector<float> sliced = slice_col(t, spike_train);
-                // std::cout << "This is line number: " << __LINE__ <<
-                // std::endl;
-
                 neuron->p += dot_sse(synapse[j], sliced.data(), sliced.size());
-                // std::cout << "This is line number: " << __LINE__ <<
-                // std::endl;
 
-                // if the potential is greater than resting potential
-                if (neuron->p > this->net.p_rest)
-                {
-                    // decrease the potential
-                    neuron->p -= var_D;
-                }
+                // Adjust the potential toward resting state based on tau_plus
+                // or tau_minus (done in training)
+                // if (neuron->p > this->net.p_rest)
+                // {
+                //     // Exponential decay toward p_rest with tau_plus
+                //     neuron->p -=
+                //         (neuron->p - this->net.p_rest) * (1 / net.tau_plus);
+                // }
+                // else
+                // {
+                //     // Exponential decay toward p_rest with tau_minus
+                //     neuron->p +=
+                //         (this->net.p_rest - neuron->p) * (1 / net.tau_minus);
+                // }
+
+                // Update active potential tracking
                 active_potential[j] = neuron->p;
             }
-            // std::cout << "This is line number: " << __LINE__ << std::endl;
         }
 
-        // perform lateral inhibition if it has not been performed already
+        // Perform lateral inhibition if not already done
         if (!lateral_inhibition_finished)
         {
             int winner = this->net.lateral_inhibition(active_potential, thresh);
-            if (winner != -1)
+            if (winner > -1)
             {
                 img_win = winner;
                 lateral_inhibition_finished = true;
             }
         }
-        // std::cout << "This is line number: " << __LINE__ << std::endl;
 
-        // for every neuron in the output layer, note how many times each neuron
-        // spiked up to this point in time
+        // Count spikes and update weights
         for (int n_indx = 0; n_indx < this->net.out_dim; n_indx++)
             if (this->net.layer2.at(n_indx).check())
                 num_spikes[n_indx]++;
 
-        // std::cout << "This is line number: " << __LINE__ << std::endl;
-
-        // check for spikes and update weights accordingly
-        this->net.update_weights(spike_train, t);
-        // std::cout << "This is line number: " << __LINE__ << std::endl;
+        custom_update_weights(spike_train, t);
     }
+
     // std::cout << "This is line number: " << __LINE__ << std::endl;
 
     // if there was a winner neuron
-    if (img_win != -1)
+    if (img_win > -1)
     {
         // std::cout << "This is line number: " << __LINE__ << std::endl;
         for (int p = 0; p < this->net.inp_dim; p++)
@@ -363,4 +374,76 @@ vector<vector<float>> PathfinderPrefetcher::poisson_encode(
     }
 
     return train;
+}
+
+void PathfinderPrefetcher::custom_update_weights(
+    vector<vector<float>> &spike_train, int t)
+{
+    // iterate through all the neurons in the output layers
+    for (int j = 0; j < this->layer2.size(); j++)
+    {
+        Neuron *neuron = &this->layer2.at(j);
+        // check whether the neuron's potential has hit the threshold
+        if (neuron->check())
+        {
+            // make sure that the neuron doesn't fire until it has finished
+            // waiting until the refractory period
+            neuron->t_reset = t + neuron->t_refractory;
+            // reset potential to the resting potential
+            neuron->p = this->p_rest;
+
+            // loop over all weights
+            for (int h = 0; h < this->inp_dim; h++)
+            {
+                for (int t1 = -2; t1 < this->time_back; t--)
+                {
+                    // if the look back is within the bounds of the simulation
+                    if (t + t1 <= this->max_time && t + t1 >= 0)
+                    {
+                        // if it sppiked within the time bounds, then it means
+                        // that the spike from this synapse probably contributed
+                        // to this neuron, so update the weights
+                        if (spike_train.at(h).at(t + t1) == 1)
+                            synapse[j][h] = custom_stdp_update(
+                                synapse[j][h],
+                                custom_reinforcement_learning(t1));
+                    }
+                }
+
+                // do the same thing, except for the forward times
+                for (int t1 = 2; t1 < this->time_forwards; t1++)
+                {
+                    if (t + t1 >= 0 && t + t1 <= this->max_time)
+                    {
+                        // we want to decrease influence for these ones now
+                        if (spike_train.at(h).at(t + t1) == 1)
+                            synapse[j][h] = custom_stdp_update(
+                                synapse[j][h],
+                                custom_reinforcement_learning(t1));
+                    }
+                }
+            }
+        }
+    }
+}
+
+float PathfinderPrefetcher::custom_stdp_update(float w, float delta_w)
+{
+    const float sigma = 1.0;
+    if (delta_w < 0)
+    {
+        return (w + sigma * delta_w * (w - abs(net.w_min)) * net.scale);
+    }
+
+    return (w + sigma * delta_w * (net.w_max - w) * net.scale);
+}
+
+float PathfinderPrefetcher::custom_reinforcement_learning(int time)
+{
+    if (time > 0)
+    {
+        return -net.a_plus * exp(-(float)(time) / net.tau_plus);
+    }
+
+    return net.a_minus * exp((float)(time) / net.tau_minus);
 }
