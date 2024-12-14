@@ -12,25 +12,20 @@ using namespace std;
 
 namespace knob
 {
-extern uint32_t pf_pattern_len;
-extern int32_t pf_confidence_threshold;
-extern int32_t pf_min_confidence;
-extern uint32_t pf_delta_range_len;
-extern uint32_t pf_neuron_numbers;
-extern uint32_t pf_timestamps;
-extern uint32_t pf_input_intensity;
-uint32_t pf_max_confidence = 5; // Really dumb that they forgot to make this a
-                                // constant. It's a 3-bit saturating counter.
-int32_t pf_max_degree = 2;
-uint32_t pf_middle_offset =
+const uint32_t pf_pattern_len = 3;
+extern const int32_t pf_confidence_threshold;
+extern const int32_t pf_min_confidence;
+extern const uint32_t pf_delta_range_len;
+const uint32_t pf_neuron_numbers = 50;
+extern const uint32_t pf_timestamps;
+extern const uint32_t pf_input_intensity;
+const uint32_t pf_max_confidence =
+    5; // Really dumb that they forgot to make this a
+       // constant. It's a 3-bit saturating counter.
+const int32_t pf_max_degree = 2;
+const uint32_t pf_middle_offset =
     67; // Prevent aliasing in neuron input. Should be prime.
 } // namespace knob
-
-typedef struct lru_pc
-{
-    unordered_map<uint64_t, unique_ptr<training_table_info_t>> page;
-    uint64_t evict;
-} lru_pc_t;
 
 typedef struct training_table_info
 {
@@ -39,6 +34,12 @@ typedef struct training_table_info
     int delta_pattern[knob::pf_pattern_len]; // Use smart pointers for arrays
     uint64_t evict;
 } training_table_info_t;
+
+typedef struct lru_pc
+{
+    unordered_map<uint64_t, unique_ptr<training_table_info_t>> page;
+    uint64_t evict;
+} lru_pc_t;
 
 typedef struct prediction_table_info
 {
@@ -71,10 +72,10 @@ class PathfinderPrefetcher : public Prefetcher
     uint64_t iteration;
     const int iter_freq = 50000;
 
-    /* Training table variables. */
-    uint64_t LRU_evict = 0;
-    const int training_table_PC_len;
-    const int training_table_page_len;
+    /* Training table variables. Set in Pathfinder repository. */
+    uint64_t lru_evict = 0;
+    const int training_table_pc_len = 8;
+    const int training_table_page_len = 128;
 
   private:
     void init_knobs();
@@ -90,9 +91,9 @@ class PathfinderPrefetcher : public Prefetcher
                                   uint64_t page_offset,
                                   vector<uint64_t> &pref_addr);
     void update_training_table(uint64_t pc, uint64_t page, uint64_t page_offset,
-                               fired_neurons, new_delta_pattern,
-                               bool is_page_offset);
-    void make_prediction();
+                               vector<int> fired_neurons,
+                               int *new_delta_pattern, bool is_page_offset);
+    float custom_threshold(vector<vector<float>> &train);
 
   public:
     PathfinderPrefetcher(string type);

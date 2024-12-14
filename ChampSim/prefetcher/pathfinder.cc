@@ -1,10 +1,19 @@
 #include "pathfinder.h"
 #include "champsim.h"
-#include "network.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <random>
+
+/* SNN library includes for Network class. */
+#include "learning.hpp"
+#include "network.hpp"
+#include "neuron.hpp"
+#include "receptive_field.hpp"
+#include "spike_train.hpp"
+#include "threshold.hpp"
+#include "utils.hpp"
 
 #include "receptive_field.hpp"
 
@@ -40,9 +49,6 @@ PathfinderPrefetcher::PathfinderPrefetcher(string type)
 
     block_mask = (1 << (page_bits - cache_block_bits)) - 1;
     page_mask = (1 << page_bits) - 1;
-
-    training_table_PC_len = 8;
-    training_table_page_len = 128;
 
     // Debugging output
     cout << knob::pf_pattern_len << "x" << knob::pf_delta_range_len << " matrix"
@@ -109,7 +115,7 @@ void PathfinderPrefetcher::update_pixel_matrix(int new_delta,
         mat.at<int>(j + 1, offset) = knob::pf_input_intensity;
         mat.at<int>(j - 1, offset) = knob::pf_input_intensity;
 
-        prime = (prime + knob::pf_middle_offset) % net.inp_x
+        prime = (prime + knob::pf_middle_offset) % net.inp_x;
     }
 
     /* Last row. */
@@ -216,7 +222,7 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
     vector<int> spikes = custom_train(1);
 
     /* Make prediction. Just get the maximum firing neuron index for now. */
-    auto max_it = std::max_element(spikes.begin(), spikes_per_neuron.end());
+    auto max_it = std::max_element(spikes.begin(), spikes.end());
     int max_index = std::distance(spikes.begin(), max_it);
 
     /* Set fired_neuron for training table. */
@@ -275,7 +281,7 @@ vector<int> PathfinderPrefetcher::custom_train_on_potential(
     // std::cout << "This is line number: " << __LINE__ << std::endl;
 
     // get a custom threshold for the given image
-    float thresh = threshold(spike_train);
+    float thresh = custom_threshold(spike_train);
     // std::cout << "This is line number: " << __LINE__ << std::endl;
 
     for (int i = 0; i < this->net.layer2.size(); i++)
@@ -302,7 +308,8 @@ vector<int> PathfinderPrefetcher::custom_train_on_potential(
             {
                 // Simulate potential accumulation from input
                 vector<float> sliced = slice_col(t, spike_train);
-                neuron->p += dot_sse(synapse[j], sliced.data(), sliced.size());
+                neuron->p +=
+                    dot_sse(net.synapse[j], sliced.data(), sliced.size());
 
                 // Adjust the potential toward resting state based on tau_plus
                 // or tau_minus (done in training)
@@ -355,11 +362,11 @@ vector<int> PathfinderPrefetcher::custom_train_on_potential(
             if (reduce(spike_train.at(p).begin(), spike_train.at(p).end()) == 0)
             {
                 // decrease the synaptic weights
-                synapse[img_win][p] -= this->net.a_minus * this->net.scale;
+                net.synapse[img_win][p] -= this->net.a_minus * this->net.scale;
                 // make sure that the weight doesn't go below minimum weight
-                if (synapse[img_win][p] < this->net.w_min)
+                if (net.synapse[img_win][p] < this->net.w_min)
                 {
-                    synapse[img_win][p] = this->net.w_min;
+                    net.synapse[img_win][p] = this->net.w_min;
                 }
             }
         }
@@ -383,8 +390,6 @@ vector<vector<float>> PathfinderPrefetcher::poisson_encode(
     // train[i].size() = max simulation time
     vector<vector<float>> train;
 
-    vector<vector<float>> train;
-
     // Poisson distribution parameters
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -400,8 +405,10 @@ vector<vector<float>> PathfinderPrefetcher::poisson_encode(
             // spikes range that can be fed into the network
             const vector<float> r1 = {this->net.w_min, this->net.w_max};
             const vector<float> r2 = {
-                1.0, this->net.max_time / this->net.time_back +
-                         this->net.max_time / this->net.time_forwards};
+                1.0,
+                static_cast<float>(this->net.max_time) / this->net.time_back +
+                    static_cast<float>(this->net.max_time) /
+                        this->net.time_forwards};
             float freq = interpolate(r1, r2, potential.at(i).at(j));
 
             if (freq <= 0)
@@ -434,9 +441,9 @@ void PathfinderPrefetcher::custom_update_weights(
     vector<vector<float>> &spike_train, int t)
 {
     // iterate through all the neurons in the output layers
-    for (int j = 0; j < this->layer2.size(); j++)
+    for (int j = 0; j < net.layer2.size(); j++)
     {
-        Neuron *neuron = &this->layer2.at(j);
+        Neuron *neuron = &net.layer2.at(j);
         // check whether the neuron's potential has hit the threshold
         if (neuron->check())
         {
@@ -444,35 +451,35 @@ void PathfinderPrefetcher::custom_update_weights(
             // waiting until the refractory period
             neuron->t_reset = t + neuron->t_refractory;
             // reset potential to the resting potential
-            neuron->p = this->p_rest;
+            neuron->p = net.p_rest;
 
             // loop over all weights
-            for (int h = 0; h < this->inp_dim; h++)
+            for (int h = 0; h < this->net.inp_dim; h++)
             {
-                for (int t1 = -2; t1 < this->time_back; t--)
+                for (int t1 = -2; t1 < this->net.time_back; t--)
                 {
                     // if the look back is within the bounds of the simulation
-                    if (t + t1 <= this->max_time && t + t1 >= 0)
+                    if (t + t1 <= this->net.max_time && t + t1 >= 0)
                     {
                         // if it sppiked within the time bounds, then it means
                         // that the spike from this synapse probably contributed
                         // to this neuron, so update the weights
                         if (spike_train.at(h).at(t + t1) == 1)
-                            synapse[j][h] = custom_stdp_update(
-                                synapse[j][h],
+                            net.synapse[j][h] = custom_stdp_update(
+                                net.synapse[j][h],
                                 custom_reinforcement_learning(t1));
                     }
                 }
 
                 // do the same thing, except for the forward times
-                for (int t1 = 2; t1 < this->time_forwards; t1++)
+                for (int t1 = 2; t1 < this->net.time_forwards; t1++)
                 {
-                    if (t + t1 >= 0 && t + t1 <= this->max_time)
+                    if (t + t1 >= 0 && t + t1 <= this->net.max_time)
                     {
                         // we want to decrease influence for these ones now
                         if (spike_train.at(h).at(t + t1) == 1)
-                            synapse[j][h] = custom_stdp_update(
-                                synapse[j][h],
+                            net.synapse[j][h] = custom_stdp_update(
+                                net.synapse[j][h],
                                 custom_reinforcement_learning(t1));
                     }
                 }
@@ -520,35 +527,52 @@ void PathfinderPrefetcher::add_predictions_to_queue(uint64_t pc, uint64_t page,
 
     training_table_info_t *tt = page_map[page].get();
 
-    if (prediction_table.find(tt->fired_neuron) == prediction_table.end())
-        return;
+    prediction_table_info_t *pts = prediction_table[tt->fired_neuron];
 
-    std::list<prediction_table_info_t> pts =
-        prediction_table.get()[tt->fired_neuron];
-
-    for (auto it = pts.begin(); it != pts.end();)
+    for (int i = 0; i < knob::pf_max_degree; i++)
     {
+        prediction_table_info_t *pt = &(pts[i]);
+
+        if (!pt->valid)
+            continue;
+
         /* For in same page. */
-        if (it->label == page_offset - tt->last_offset)
+        if (pt->delta == page_offset - tt->last_offset)
         {
-            if (it->confidence < knob::pf_max_confidence)
-                it->confidence += 1;
+            if (pt->confidence < knob::pf_max_confidence)
+                pt->confidence += 1;
 
             pref_addr.push_back(page + (page_offset << cache_block_bits));
         }
 
         /* For in different page. */
 
-        if (it->confidence < knob::pf_min_confidence)
+        if (pt->confidence < knob::pf_min_confidence)
         {
             // Remove the current element and move the iterator forward
-            it = pts.erase(it);
+            pt->valid = false;
         }
         else
         {
             // Decrease confidence and move the iterator forward
-            it->confidence -= 1;
-            ++it;
+            pt->confidence -= 1;
         }
     }
+}
+
+float PathfinderPrefetcher::custom_threshold(vector<vector<float>> &train)
+{
+    int train_len = train.at(0).size();
+    int thresh = 0;
+
+    for (int i = 0; i < train_len; i++)
+    {
+        int col_sum = 0;
+        for (int j = 0; j < train.size(); j++)
+            col_sum += train.at(j).at(i);
+        if (col_sum > thresh)
+            thresh = col_sum;
+    }
+
+    return (thresh / 3) * net.scale;
 }

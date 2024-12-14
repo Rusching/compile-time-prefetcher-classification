@@ -272,11 +272,9 @@ std::string le_featurewise_plot_file_name;
 bool le_featurewise_remove_plot_script;
 
 /* Pathfinder. All values come from python implementation. */
-uint32_t pf_pattern_len = 3;
 int32_t pf_confidence_threshold = 1;
 int32_t pf_min_confidence = -2;
 uint32_t pf_delta_range_len = 128;
-uint32_t pf_neuron_numbers = 50;
 uint32_t pf_timestamps = 32;
 uint32_t pf_input_intensity = 1576;
 } // namespace knob
@@ -1271,10 +1269,6 @@ int parse_knobs(void *user, const char *section, const char *name,
         knob::le_featurewise_remove_plot_script =
             !strcmp(value, "true") ? true : false;
     }
-    else if (MATCH("", "pf_pattern_len"))
-    {
-        knob::pf_pattern_len = atoi(value);
-    }
     else if (MATCH("", "pf_confidence_threshold"))
     {
         knob::pf_confidence_threshold = atoi(value);
@@ -1286,10 +1280,6 @@ int parse_knobs(void *user, const char *section, const char *name,
     else if (MATCH("", "pf_delta_range_len"))
     {
         knob::pf_delta_range_len = atoi(value);
-    }
-    else if (MATCH("", "pf_neuron_numbers"))
-    {
-        knob::pf_neuron_numbers = atoi(value);
     }
     else if (MATCH("", "pf_timestamps"))
     {
