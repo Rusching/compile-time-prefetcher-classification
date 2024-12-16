@@ -29,7 +29,6 @@ const uint32_t pf_middle_offset =
 
 typedef struct training_table_info
 {
-    int fired_neuron;
     int last_offset;
     int delta_pattern[knob::pf_pattern_len]; // Use smart pointers for arrays
     uint64_t evict;
@@ -80,20 +79,20 @@ class PathfinderPrefetcher : public Prefetcher
   private:
     void init_knobs();
     void init_stats();
-    void update_pixel_matrix(int new_delta, int *old_delta_pattern);
+    void update_pixel_matrix(int *delta_pattern);
     vector<int> custom_train(const int epochs);
     vector<int> custom_train_on_potential(vector<vector<float>> &potential);
     vector<vector<float>> poisson_encode(vector<vector<float>> &potential);
     void custom_update_weights(vector<vector<float>> &spike_train, int t);
     float custom_stdp_update(float w, float delta_w);
     float custom_reinforcement_learning(int time);
-    void add_predictions_to_queue(uint64_t pc, uint64_t page,
-                                  uint64_t page_offset,
-                                  vector<uint64_t> &pref_addr);
     void update_training_table(uint64_t pc, uint64_t page, uint64_t page_offset,
                                vector<int> fired_neurons,
                                int *new_delta_pattern, bool is_page_offset);
     float custom_threshold(vector<vector<float>> &train);
+    training_table_info_t *insert_page(uint64_t pc, uint64_t page);
+    bool pc_in_training_table(uint64_t pc);
+    bool page_in_training_table(lru_pc_t *pt, uint64_t page);
 
   public:
     PathfinderPrefetcher(string type);

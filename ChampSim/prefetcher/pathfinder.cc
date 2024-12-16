@@ -4,18 +4,79 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <iterator>
+#include <numeric>
 #include <random>
 
 /* SNN library includes for Network class. */
-#include "learning.hpp"
 #include "network.hpp"
-#include "neuron.hpp"
 #include "receptive_field.hpp"
-#include "spike_train.hpp"
-#include "threshold.hpp"
 #include "utils.hpp"
 
-#include "receptive_field.hpp"
+/* Includes being really weird (like won't event read std::reduce(), so just
+ * redeclaring here. */
+template <class InputIterator>
+constexpr typename std::iterator_traits<InputIterator>::value_type reduce(
+    InputIterator first, InputIterator last)
+{
+    using ValueType = typename std::iterator_traits<InputIterator>::value_type;
+    return std::accumulate(first, last, ValueType{});
+}
+
+template <typename T>
+T interpolate(const std::vector<T> &xData, const std::vector<T> &yData, T x,
+              bool extrapolate = false)
+{
+    int size = xData.size();
+
+    // find left end of interval for interpolation
+    int i = 0;
+
+    // special case: beyond right end
+    if (x >= xData[size - 2])
+    {
+        i = size - 2;
+    }
+    else
+
+    {
+        while (x > xData[i + 1])
+            i++;
+    }
+
+    // points on either side (unless beyond ends)
+    T xL = xData[i], yL = yData[i], xR = xData[i + 1], yR = yData[i + 1];
+    // if beyond ends of array and not extrapolatin
+    if (!extrapolate)
+    {
+        if (x < xL)
+            yR = yL;
+        if (x > xR)
+            yL = yR;
+    }
+
+    // gradient
+    T dydx = (yR - yL) / (xR - xL);
+    // linear interpolation
+    return yL + dydx * (x - xL);
+}
+
+template <typename MapType> void evict_least_used(MapType &container)
+{
+    uint64_t test_evict, evict_idx = 0, evict_num = ~static_cast<uint64_t>(0);
+
+    for (const auto &pair : container)
+    {
+        test_evict = pair.second.get()->evict; // Access the `evict` member
+        if (test_evict < evict_num)
+        {
+            evict_idx = pair.first; // Track the key of the least-used item
+            evict_num = test_evict;
+        }
+    }
+
+    container.erase(evict_idx); // Remove the entry with the smallest `evict`
+}
 
 /* Constructor. */
 PathfinderPrefetcher::PathfinderPrefetcher(string type)
@@ -86,16 +147,16 @@ void PathfinderPrefetcher::print_config()
          << knob::pf_delta_range_len << " col matrix" << endl;
 }
 
-void PathfinderPrefetcher::update_pixel_matrix(int new_delta,
-                                               int *old_delta_pattern)
+void PathfinderPrefetcher::update_pixel_matrix(int *delta_pattern)
 {
+    const int offset_adj = net.inp_x / 2;
     int offset;
 
     /* Set every row to 0. */
     mat.setTo(0);
 
     /* First row. */
-    offset = old_delta_pattern[1 % net.inp_y];
+    offset = delta_pattern[0] + offset_adj;
     mat.at<int>(0, offset) = knob::pf_input_intensity;
     mat.at<int>(0, (offset - 1) % net.inp_x) = knob::pf_input_intensity;
     mat.at<int>(0, (offset + 1) % net.inp_x) = knob::pf_input_intensity;
@@ -107,7 +168,7 @@ void PathfinderPrefetcher::update_pixel_matrix(int new_delta,
     for (int j = 1; j < net.inp_y - 1; j++)
     {
 
-        offset = old_delta_pattern[j] + prime;
+        offset = (delta_pattern[j] + prime + offset_adj % net.inp_x);
 
         mat.at<int>(j, offset) = knob::pf_input_intensity;
         mat.at<int>(0, (offset - 1) % net.inp_x) = knob::pf_input_intensity;
@@ -119,7 +180,7 @@ void PathfinderPrefetcher::update_pixel_matrix(int new_delta,
     }
 
     /* Last row. */
-    offset = new_delta;
+    offset = delta_pattern[net.inp_y - 1] + offset_adj;
     mat.at<int>(0, offset) = knob::pf_input_intensity;
     mat.at<int>(0, (offset - 1) % net.inp_x) = knob::pf_input_intensity;
     mat.at<int>(0, (offset + 1) % net.inp_x) = knob::pf_input_intensity;
@@ -148,7 +209,7 @@ vector<int> PathfinderPrefetcher::custom_train(const int epochs)
 
         cout << "potential arr cast success" << endl;
 
-        spikes_per_neuron = net.train_on_potential(potential);
+        spikes_per_neuron = custom_train_on_potential(potential);
 
         cout << "train on potential success" << endl;
     }
@@ -159,7 +220,7 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
                                              uint8_t cache_hit, uint8_t type,
                                              vector<uint64_t> &pref_addr)
 {
-    // cout << "Invoked!" << endl;
+    cout << "Invoked!" << endl;
 
     if (iteration++ % iter_freq == 0)
         cout << "On iteration " << iteration - 1 << endl;
@@ -167,12 +228,13 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
     /* Calculate memory access values. */
     uint64_t page_offset = (address >> cache_block_bits) & block_mask;
     uint64_t page = (address >> page_bits) << page_bits;
-    int offset_idx = page_offset + net.inp_x / 2;
 
     /* Increment / decrement confidence of previous predictions. */
     uint64_t last_page_offset = ((last_addr >> cache_block_bits) & block_mask)
                                 << cache_block_bits;
     uint64_t last_page = (last_addr >> page_bits) << page_bits;
+
+    cout << "Pass assignments" << endl;
 
     prediction_table_info_t *pt;
     for (int i = 0; i < knob::pf_max_degree; i++)
@@ -199,35 +261,52 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
         }
     }
 
-    int *offset_arr;
+    cout << "Survive prediction verification update" << endl;
+
     int delta;
     training_table_info_t *tt;
 
     /* If PC + page in training table, extract its deltas, calculate the new
      * delta, save it. */
-    if (true)
+    if (pc_in_training_table(pc) &&
+        page_in_training_table(training_table[pc].get(), page))
     {
+        tt = training_table.at(pc).get()->page.at(page).get();
+        delta = page_offset - tt->last_offset;
+
+        for (int i = 1; i < net.inp_y; i++)
+        {
+            tt->delta_pattern[i - 1] = tt->delta_pattern[i];
+        }
+        tt->delta_pattern[net.inp_y - 1] = delta;
     }
     /* If not in training table, create an entry, create the offset entry, save
      * entry.*/
     else
     {
+        cout << "About to insert page" << endl;
+
+        tt = insert_page(pc, page);
         delta = page_offset;
+
+        tt->delta_pattern[0] = page_offset;
     }
 
+    cout << "Survive TT creations" << endl;
+
     /* Prep pattern. */
-    update_pixel_matrix(delta, offset_arr);
+    update_pixel_matrix(tt->delta_pattern);
+
+    cout << "Survive pixel matrix" << endl;
 
     /* Feed into neural network. */
     vector<int> spikes = custom_train(1);
 
+    cout << "Survive training" << endl;
+
     /* Make prediction. Just get the maximum firing neuron index for now. */
     auto max_it = std::max_element(spikes.begin(), spikes.end());
     int max_index = std::distance(spikes.begin(), max_it);
-
-    /* Set fired_neuron for training table. */
-    tt->fired_neuron = max_index;
-    tt->evict = lru_evict++;
 
     /* Add predictions. */
     bool delta_repped = false;
@@ -240,6 +319,8 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
 
         pref_addr.push_back(page + (pt->delta << cache_block_bits));
     }
+
+    cout << "Survive predicting" << endl;
 
     /* If there is an open space and this delta is not represented, claim it for
      * this delta. */
@@ -260,9 +341,14 @@ void PathfinderPrefetcher::invoke_prefetcher(uint64_t pc, uint64_t address,
         }
     }
 
+    cout << "Survive PT update" << endl;
+
     /* Cleanup. */
+    tt->last_offset = page_offset;
     last_addr = address;
     last_pred = max_index;
+
+    cout << "Survive cleanup" << endl;
 }
 
 void PathfinderPrefetcher::dump_stats()
@@ -509,57 +595,6 @@ float PathfinderPrefetcher::custom_reinforcement_learning(int time)
     return net.a_minus * exp((float)(time) / net.tau_minus);
 }
 
-void PathfinderPrefetcher::add_predictions_to_queue(uint64_t pc, uint64_t page,
-                                                    uint64_t page_offset,
-                                                    vector<uint64_t> &pref_addr)
-{
-    /* Not in training table yet. */
-    if (training_table.find(pc) == training_table.end())
-        return;
-
-    if (training_table[pc] == nullptr)
-        return;
-
-    std::unordered_map<uint64_t, unique_ptr<training_table_info_t>> &page_map =
-        training_table[pc]->page;
-    if (page_map.find(page) == page_map.end())
-        return;
-
-    training_table_info_t *tt = page_map[page].get();
-
-    prediction_table_info_t *pts = prediction_table[tt->fired_neuron];
-
-    for (int i = 0; i < knob::pf_max_degree; i++)
-    {
-        prediction_table_info_t *pt = &(pts[i]);
-
-        if (!pt->valid)
-            continue;
-
-        /* For in same page. */
-        if (pt->delta == page_offset - tt->last_offset)
-        {
-            if (pt->confidence < knob::pf_max_confidence)
-                pt->confidence += 1;
-
-            pref_addr.push_back(page + (page_offset << cache_block_bits));
-        }
-
-        /* For in different page. */
-
-        if (pt->confidence < knob::pf_min_confidence)
-        {
-            // Remove the current element and move the iterator forward
-            pt->valid = false;
-        }
-        else
-        {
-            // Decrease confidence and move the iterator forward
-            pt->confidence -= 1;
-        }
-    }
-}
-
 float PathfinderPrefetcher::custom_threshold(vector<vector<float>> &train)
 {
     int train_len = train.at(0).size();
@@ -575,4 +610,63 @@ float PathfinderPrefetcher::custom_threshold(vector<vector<float>> &train)
     }
 
     return (thresh / 3) * net.scale;
+}
+
+training_table_info_t *PathfinderPrefetcher::insert_page(uint64_t pc,
+                                                         uint64_t page)
+{
+    lru_pc_t *pt;
+    training_table_info_t *tt;
+
+    if (training_table.size() >= training_table_pc_len)
+        evict_least_used(training_table);
+
+    unique_ptr<lru_pc_t> new_page = std::make_unique<lru_pc_t>();
+    training_table[pc] = std::move(new_page);
+
+    pt = training_table[pc].get();
+    pt->evict = lru_evict++;
+
+    cout << "Survive pc entry assignment" << endl;
+
+    if (pt->page.size() >= training_table_page_len)
+        evict_least_used(pt->page);
+
+    unique_ptr<training_table_info_t> net_tt =
+        std::make_unique<training_table_info_t>();
+    pt->page[page] = std::move(net_tt);
+
+    tt = pt->page[page].get();
+
+    cout << "Survive page entry assignment" << endl;
+
+    /* Init training table info. */
+    tt->evict = lru_evict++;
+    tt->last_offset = 0;
+    for (int i = 0; i < net.inp_y; i++)
+    {
+        tt->delta_pattern[i] = 0;
+    }
+
+    return tt;
+}
+
+bool PathfinderPrefetcher::pc_in_training_table(uint64_t pc)
+{
+    bool out = training_table.find(pc) != training_table.end();
+
+    if (out)
+        training_table[pc]->evict = lru_evict++;
+
+    return out;
+}
+
+bool PathfinderPrefetcher::page_in_training_table(lru_pc_t *pt, uint64_t page)
+{
+    bool out = pt->page.find(page) != pt->page.end();
+
+    if (out)
+        pt->page[page].get()->evict = lru_evict++;
+
+    return out;
 }
